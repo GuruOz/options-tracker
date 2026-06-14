@@ -30,10 +30,10 @@ class Settings(BaseSettings):
 
     # Poller cadences (seconds).
     poll_heartbeat_seconds: int = 45
-    poll_positions_seconds: int = 90
-    poll_marketdata_seconds: int = 45
-    poll_trades_seconds: int = 180
-    poll_market_seconds: int = 600  # underlying history + signal
+    poll_positions_seconds: int = 60
+    poll_marketdata_seconds: int = 60
+    poll_trades_seconds: int = 60
+    poll_market_seconds: int = 60  # underlying history + signal
 
     @property
     def verify_ssl(self) -> bool | str:

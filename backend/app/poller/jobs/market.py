@@ -1,9 +1,8 @@
 """Poll underlying history + IV, compute indicators and the composite signal.
 
-Tracked underlyings are auto-derived from the latest positions (stocks by their
-own conid; option legs' underlyings resolved via secdef search) plus any in
-settings.underlyings. Trend/RSI work immediately from price history; the
-IV-percentile/rank sub-scores stay "n/a" until enough IV observations accumulate.
+Tracked underlyings come exclusively from settings.underlyings (user-configured).
+Trend/RSI work immediately from price history; IV-percentile/rank sub-scores
+stay "n/a" until enough IV observations accumulate (≥20).
 """
 from __future__ import annotations
 
@@ -18,56 +17,20 @@ from app.clients.ibkr.fields import UNDERLYING_FIELD_CODES
 from app.clients.ibkr.normalize import parse_history, parse_underlying_quote
 from app.core.logging import get_logger
 from app.core.state import broadcast_event, session_state
-from app.db import repo
 from app.db.base import AsyncSessionLocal
 from app.db.models import MarketSnapshot, Setting, SignalHistory
 
+
 log = get_logger("poller.market")
 
-_OPTION_TYPES = {"OPT", "FOP", "WAR"}
-_MIN_IV_HISTORY = 20  # observations before IV rank/percentile is meaningful
-_underlying_conid_cache: dict[str, int] = {}
+_MIN_IV_HISTORY = 5  # observations before IV rank/percentile is meaningful
 
 
-async def _resolve_underlying_conid(client: IBKRClient, symbol: str) -> int | None:
-    if symbol in _underlying_conid_cache:
-        return _underlying_conid_cache[symbol]
-    try:
-        results = await client.secdef_search(symbol)
-    except (IBKRError, IBKRAuthError):
-        return None
-    if not isinstance(results, list) or not results:
-        return None
-    chosen = next(
-        (r for r in results if any(
-            (s or {}).get("secType") == "STK" for s in (r.get("sections") or [])
-        )),
-        results[0],
-    )
-    try:
-        conid = int(chosen["conid"])
-    except (KeyError, ValueError, TypeError):
-        return None
-    _underlying_conid_cache[symbol] = conid
-    return conid
-
-
-async def _tracked_underlyings(client: IBKRClient, account_id: str) -> dict[int, str]:
-    tracked: dict[int, str] = {}
+async def _tracked_underlyings() -> dict[int, str]:
+    """Return {conid: symbol} from settings.underlyings only."""
     async with AsyncSessionLocal() as session:
-        positions = await repo.latest_positions(session, account_id)
         settings_row = await session.get(Setting, 1)
-
-    for p in positions:
-        if not p.symbol:
-            continue
-        if (p.sec_type or "").upper() in _OPTION_TYPES:
-            conid = await _resolve_underlying_conid(client, p.symbol)
-            if conid:
-                tracked[conid] = p.symbol
-        elif p.conid:
-            tracked[p.conid] = p.symbol
-
+    tracked: dict[int, str] = {}
     for u in (settings_row.data if settings_row else {}).get("underlyings", []):
         try:
             tracked[int(u["conid"])] = u.get("symbol") or str(u["conid"])
@@ -88,14 +51,14 @@ async def _iv_history(conid: int, limit: int = 252) -> list[float]:
 
 
 async def poll_market(client: IBKRClient) -> None:
-    if not (session_state.authenticated and session_state.account_id):
+    if not session_state.authenticated:
         return
 
     async with AsyncSessionLocal() as session:
         settings_row = await session.get(Setting, 1)
     settings = settings_row.data if settings_row else None
 
-    tracked = await _tracked_underlyings(client, session_state.account_id)
+    tracked = await _tracked_underlyings()
     if not tracked:
         return
 
@@ -116,7 +79,10 @@ async def poll_market(client: IBKRClient) -> None:
         quote = parse_underlying_quote(snap[0]) if snap else {"price": None, "iv": None}
 
         price = quote["price"] if quote["price"] is not None else (closes[-1] if closes else None)
-        iv = quote["iv"]  # percent
+        iv = quote["iv"]  # percent (None if IBKR subscription doesn't supply it)
+        if iv is None:
+            log.warning("iv_missing", symbol=symbol, conid=conid,
+                        hint="check IBKR market-data subscription or snapshot field codes")
         rv = indicators.realized_vol(closes, window=20)
         rv_pct = rv * 100.0 if rv is not None else None
 

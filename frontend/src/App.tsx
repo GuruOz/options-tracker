@@ -2,9 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { getJSON } from "./api/client";
 import { useSession } from "./api/useSession";
 import type { Meta } from "./api/types";
-import { SessionBanner } from "./components/SessionBanner";
+import { HeaderBar } from "./components/HeaderBar";
+import { UnderlyingsPanel } from "./components/UnderlyingsPanel";
 import { SignalPanel } from "./components/SignalPanel";
-import { AccountPanel } from "./components/AccountPanel";
 import { PositionsPanel } from "./components/PositionsPanel";
 import { MarketPanel } from "./components/MarketPanel";
 import { PanelGrid } from "./components/PanelGrid";
@@ -28,12 +28,12 @@ export default function App() {
       </header>
 
       <div className="mb-6">
-        <SessionBanner session={session} />
+        <HeaderBar session={session} />
       </div>
 
       <div className="space-y-4">
+        <UnderlyingsPanel />
         <SignalPanel />
-        <AccountPanel />
         <PositionsPanel />
         <MarketPanel />
       </div>

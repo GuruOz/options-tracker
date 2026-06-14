@@ -31,6 +31,7 @@ services:
       IBEAM_PASSWORD: ${IBEAM_PASSWORD:?set IBEAM_PASSWORD in .env}
       # Keep the session alive; IBKR still forces a daily re-auth (see README).
       IBEAM_MAINTENANCE_INTERVAL: ${IBEAM_MAINTENANCE_INTERVAL:-60}
+      IBEAM_PAGE_LOAD_TIMEOUT: ${IBEAM_PAGE_LOAD_TIMEOUT:-30}
       # Advanced (optional): to store the password Fernet-encrypted, uncomment the
       # next line and set IBEAM_KEY to a 32-byte url-safe base64 key in .env.
       # Leave it OUT for a plaintext password — an EMPTY key makes login fail.

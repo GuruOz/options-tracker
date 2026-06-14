@@ -72,6 +72,12 @@ export interface SignalSubScores {
   rsi_drawdown: number | null;
 }
 
+export interface ContractResult {
+  conid: number;
+  symbol: string;
+  description: string;
+}
+
 export interface Signal {
   underlying_conid: number;
   symbol: string | null;
