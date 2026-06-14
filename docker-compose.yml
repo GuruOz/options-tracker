@@ -1,0 +1,112 @@
+name: options-tracker
+
+# Self-hosted, read-only options-selling dashboard.
+# Only the `frontend` (nginx) publishes a host port. The gateway, backend, db
+# and redis are reachable ONLY on this private internal network.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-options}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-options}
+      POSTGRES_DB: ${POSTGRES_DB:-options}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-options} -d ${POSTGRES_DB:-options}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+    # Not published to the host. Uncomment for local DB debugging only:
+    # ports: ["127.0.0.1:5432:5432"]
+
+  ibkr-gateway:
+    image: voyz/ibeam:latest
+    restart: unless-stopped
+    environment:
+      IBEAM_ACCOUNT: ${IBEAM_ACCOUNT:?set IBEAM_ACCOUNT in .env}
+      IBEAM_PASSWORD: ${IBEAM_PASSWORD:?set IBEAM_PASSWORD in .env}
+      # Keep the session alive; IBKR still forces a daily re-auth (see README).
+      IBEAM_MAINTENANCE_INTERVAL: ${IBEAM_MAINTENANCE_INTERVAL:-60}
+      # Advanced (optional): to store the password Fernet-encrypted, uncomment the
+      # next line and set IBEAM_KEY to a 32-byte url-safe base64 key in .env.
+      # Leave it OUT for a plaintext password — an EMPTY key makes login fail.
+      # IBEAM_KEY: ${IBEAM_KEY}
+    volumes:
+      # Widen the gateway's IP allowlist to the Compose network, otherwise it
+      # returns "Access Denied" to the backend. Single-file mount (safe).
+      - ./gateway/conf.yaml:/srv/clientportal.gw/root/conf.yaml
+    healthcheck:
+      # Image is Python-based; just confirm the gateway port is accepting TCP.
+      test: ["CMD-SHELL", "python -c \"import socket;socket.create_connection(('127.0.0.1',5000),3)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks: [internal]
+    # Never published to the host's public interface.
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-options}:${POSTGRES_PASSWORD:-options}@db:5432/${POSTGRES_DB:-options}
+      IBKR_GATEWAY_URL: ${IBKR_GATEWAY_URL:-https://ibkr-gateway:5000/v1/api}
+      IBKR_GATEWAY_VERIFY: ${IBKR_GATEWAY_VERIFY:-false}
+      IBKR_ACCOUNT_ID: ${IBKR_ACCOUNT_ID:-}
+      REDIS_URL: ${REDIS_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POLL_HEARTBEAT_SECONDS: ${POLL_HEARTBEAT_SECONDS:-45}
+      POLL_POSITIONS_SECONDS: ${POLL_POSITIONS_SECONDS:-90}
+      POLL_MARKETDATA_SECONDS: ${POLL_MARKETDATA_SECONDS:-45}
+      POLL_TRADES_SECONDS: ${POLL_TRADES_SECONDS:-180}
+    depends_on:
+      db:
+        condition: service_healthy
+      # NOT service_healthy: the gateway may be unauthenticated/awaiting 2FA at
+      # boot, which is a normal state the backend surfaces as DISCONNECTED.
+      ibkr-gateway:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=3).status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [internal]
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      # The ONLY host-published port. Loopback-only by default.
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+
+  # Optional. Enabled only with:  docker compose --profile redis up
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles: ["redis"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks: [internal]
+
+volumes:
+  pgdata:
+
+networks:
+  internal:
+    driver: bridge

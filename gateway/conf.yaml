@@ -1,0 +1,40 @@
+# Client Portal Gateway config (mounted into the IBEAM container).
+#
+# This is the stock gateway conf.yaml with one change: the ips.allow list is
+# widened to the private Docker ranges so the backend container can reach the
+# gateway. Without this, the gateway answers requests from our custom Compose
+# network (e.g. 172.18.0.x) with "Access Denied" while only allowing 127.0.0.1
+# and the default bridge (172.17.0.*). The gateway is never published to the
+# host, so allowing private ranges here is safe.
+
+ip2loc: "US"
+proxyRemoteSsl: true
+proxyRemoteHost: "https://api.ibkr.com"
+listenPort: 5000
+listenSsl: true
+ccp: false
+svcEnvironment: "v1"
+sslCert: "vertx.jks"
+sslPwd: "mywebapi"
+authDelay: 3000
+portalBaseURL: ""
+serverOptions:
+  blockedThreadCheckInterval: 1000000
+  eventLoopPoolSize: 20
+  workerPoolSize: 20
+  maxWorkerExecuteTime: 100
+  internalBlockingPoolSize: 20
+cors:
+  origin.allowed: "*"
+  allowCredentials: false
+webApps:
+  - name: "demo"
+    index: "index.html"
+ips:
+  allow:
+    - 127.0.0.1   # localhost (IBEAM's own calls)
+    - 10.*        # Docker / Kubernetes private ranges
+    - 172.*       # Docker bridge networks (default 172.17 + custom Compose nets)
+    - 192.168.*   # private LAN
+  deny:
+    - 0.0.0.0/0   # deny everything else

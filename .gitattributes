@@ -1,0 +1,6 @@
+# Normalize line endings; keep LF for files executed inside Linux containers.
+* text=auto eol=lf
+*.sh text eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
