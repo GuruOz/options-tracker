@@ -39,15 +39,18 @@ Account scope v1: **single account**, but the schema is multi-ready — `account
 
 ## Poller jobs & cadences
 
-All data jobs default to **60 seconds**. They self-skip until the session is authenticated.
+Data jobs run in two phases (see `poller/scheduler.py`). They self-skip until the session is authenticated.
 
-| Job | Cadence | What it does |
+- **Startup burst:** every `POLL_BURST_SECONDS` (default 20 s) for the first `POLL_BURST_WINDOW_SECONDS` (default 300 s). Fills the UI fast and accumulates IV history quickly; because jobs self-skip until auth, frequent retries mean data appears the moment login (incl. 2FA) completes.
+- **Steady state:** after the burst window each job is rescheduled (via `scheduler.reschedule_job`) to its configured cadence (default 300 s / 5 min).
+
+| Job | Steady cadence | What it does |
 |-----|---------|--------------|
-| `session_heartbeat` | 45 s | `/tickle` + auth status; broadcasts WS session events |
-| `poll_positions` | 60 s | Fetches positions + Greek snapshot; upserts `position_snapshots` |
-| `poll_account` | 60 s | Fetches portfolio summary; upserts `account_snapshots` |
-| `poll_trades` | 60 s | Fetches recent trades; upserts `executions` (idempotent by exec id) |
-| `poll_market` | 60 s | Fetches 1-year daily history + live snapshot for each tracked underlying; persists `market_snapshots` + `signal_history` |
+| `session_heartbeat` | 45 s (fixed) | `/tickle` + auth status; broadcasts WS session events |
+| `poll_positions` | 300 s | Fetches positions + Greek snapshot; upserts `position_snapshots` |
+| `poll_account` | 300 s | Fetches portfolio summary; upserts `account_snapshots` |
+| `poll_trades` | 300 s | Fetches recent trades; upserts `executions` (idempotent by exec id) |
+| `poll_market` | 300 s | Fetches 1-year daily history + live snapshot for each tracked underlying; persists `market_snapshots` + `signal_history` |
 
 **Tracked underlyings** come exclusively from `settings.underlyings` (user-configured via the in-app UI). The market job is a no-op if the list is empty.
 

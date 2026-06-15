@@ -28,12 +28,18 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
-    # Poller cadences (seconds).
+    # Poller cadences (seconds) — steady state after the startup burst.
     poll_heartbeat_seconds: int = 45
-    poll_positions_seconds: int = 60
-    poll_marketdata_seconds: int = 60
-    poll_trades_seconds: int = 60
-    poll_market_seconds: int = 60  # underlying history + signal
+    poll_positions_seconds: int = 300
+    poll_marketdata_seconds: int = 300
+    poll_trades_seconds: int = 300
+    poll_market_seconds: int = 300  # underlying history + signal
+
+    # Startup burst: poll data jobs rapidly for the first window so the UI
+    # populates quickly (and IV history accumulates) before settling to the
+    # steady cadences above.
+    poll_burst_seconds: int = 20
+    poll_burst_window_seconds: int = 300
 
     @property
     def verify_ssl(self) -> bool | str:

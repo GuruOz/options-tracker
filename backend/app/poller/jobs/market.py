@@ -76,22 +76,37 @@ async def poll_market(client: IBKRClient) -> None:
             snap = await client.market_snapshot([conid], UNDERLYING_FIELD_CODES)
         except (IBKRError, IBKRAuthError):
             snap = []
+        raw_snap_keys = list(snap[0].keys()) if snap else []
         quote = parse_underlying_quote(snap[0]) if snap else {"price": None, "iv": None}
 
         price = quote["price"] if quote["price"] is not None else (closes[-1] if closes else None)
         iv = quote["iv"]  # percent (None if IBKR subscription doesn't supply it)
         if iv is None:
-            log.warning("iv_missing", symbol=symbol, conid=conid,
-                        hint="check IBKR market-data subscription or snapshot field codes")
+            log.warning(
+                "iv_missing", symbol=symbol, conid=conid,
+                snap_keys=raw_snap_keys,
+                snap_values={k: snap[0].get(k) for k in ["7283", "7633", "7607", "7087"] if snap} if snap else {},
+                hint="check IBKR market-data subscription or snapshot field codes",
+            )
         rv = indicators.realized_vol(closes, window=20)
         rv_pct = rv * 100.0 if rv is not None else None
 
         iv_hist = await _iv_history(conid)
+        log.debug(
+            "iv_percentile_inputs", symbol=symbol, conid=conid,
+            iv=iv, iv_hist_count=len(iv_hist), min_required=_MIN_IV_HISTORY,
+        )
         if iv is not None and len(iv_hist) >= _MIN_IV_HISTORY:
             ivp = indicators.iv_percentile(iv, iv_hist)
             ivr = indicators.iv_rank(iv, iv_hist)
+            log.debug("iv_percentile_result", symbol=symbol, ivp=ivp, ivr=ivr)
         else:
             ivp = ivr = None
+            log.info(
+                "iv_percentile_skipped", symbol=symbol, conid=conid,
+                reason="iv_none" if iv is None else "insufficient_history",
+                iv=iv, iv_hist_count=len(iv_hist), min_required=_MIN_IV_HISTORY,
+            )
 
         inputs = {
             "iv_percentile": ivp,
