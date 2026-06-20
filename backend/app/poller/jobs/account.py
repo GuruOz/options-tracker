@@ -14,7 +14,7 @@ log = get_logger("poller.account")
 
 
 async def poll_account(client: IBKRClient) -> None:
-    if not (session_state.authenticated and session_state.account_id):
+    if not (session_state.user_logged_in and session_state.account_id):
         return
     account_id = session_state.account_id
 

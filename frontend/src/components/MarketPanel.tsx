@@ -13,14 +13,14 @@ export function MarketPanel() {
   const rows = data ?? [];
 
   return (
-    <section className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="mb-3 text-base font-semibold text-slate-800">Market context</h2>
+    <section className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      <h2 className="mb-3 text-base font-semibold text-slate-800 dark:text-slate-100">Market context</h2>
       {rows.length === 0 ? (
-        <p className="text-sm text-slate-500">No market data yet.</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400">No market data yet.</p>
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
+            <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">
               <th className="py-2 pr-3">Symbol</th>
               <th className="pr-3 text-right">Price</th>
               <th className="pr-3 text-right">IV %</th>
@@ -33,17 +33,17 @@ export function MarketPanel() {
           </thead>
           <tbody>
             {rows.map((m) => (
-              <tr key={m.conid} className="border-t border-slate-100">
-                <td className="py-2 pr-3 font-medium text-slate-800">
+              <tr key={m.conid} className="border-t border-slate-100 dark:border-slate-700">
+                <td className="py-2 pr-3 font-medium text-slate-800 dark:text-slate-100">
                   {m.symbol ?? m.conid}
                 </td>
-                <td className="pr-3 text-right tabular-nums">{num(m.price)}</td>
-                <td className="pr-3 text-right tabular-nums">{num(m.iv, 1)}</td>
-                <td className="pr-3 text-right tabular-nums">{num(m.realized_vol, 1)}</td>
-                <td className="pr-3 text-right tabular-nums">{round(m.iv_percentile)}</td>
-                <td className="pr-3 text-right tabular-nums">{round(m.rsi14)}</td>
-                <td className="pr-3 text-right tabular-nums">{num(m.sma50)}</td>
-                <td className="text-right tabular-nums">{num(m.sma200)}</td>
+                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(m.price)}</td>
+                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(m.iv, 1)}</td>
+                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(m.realized_vol, 1)}</td>
+                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{round(m.iv_percentile)}</td>
+                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{round(m.rsi14)}</td>
+                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(m.sma50)}</td>
+                <td className="text-right tabular-nums dark:text-slate-300">{num(m.sma200)}</td>
               </tr>
             ))}
           </tbody>

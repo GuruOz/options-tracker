@@ -1,6 +1,6 @@
 """Shared constants, including the compliance disclaimer shown in the UI."""
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 DISCLAIMER = (
     "Informational only — not investment advice. This dashboard is read-only and "

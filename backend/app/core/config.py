@@ -31,7 +31,6 @@ class Settings(BaseSettings):
     # Poller cadences (seconds) — steady state after the startup burst.
     poll_heartbeat_seconds: int = 45
     poll_positions_seconds: int = 300
-    poll_marketdata_seconds: int = 300
     poll_trades_seconds: int = 300
     poll_market_seconds: int = 300  # underlying history + signal
 
@@ -40,6 +39,21 @@ class Settings(BaseSettings):
     # steady cadences above.
     poll_burst_seconds: int = 20
     poll_burst_window_seconds: int = 300
+
+    # Public price refresh (yfinance) — runs independently of IBKR auth.
+    poll_public_price_seconds: int = 300
+
+    # Max seconds to wait for 2FA approval during user-initiated login.
+    # IBEAM gateway startup + page load + form submit + MFA approval can take 60-90s.
+    pull_login_timeout_seconds: int = 120
+
+    # Docker container name of the ibkr-gateway service, for on-demand restart.
+    docker_ibeam_container: str = "options-tracker-ibkr-gateway-1"
+
+    # IBKR Flex Web Service — pulls all historical trades directly from IBKR.
+    # Set these once (see README) and the app auto-imports on every login.
+    ibkr_flex_token: str | None = None
+    ibkr_flex_query_id: str | None = None
 
     @property
     def verify_ssl(self) -> bool | str:

@@ -46,14 +46,14 @@ export function HeaderBar({ session }: { session: SessionState }) {
     : "—";
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+    <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         {/* Connection status */}
         <div className="flex items-center gap-2 min-w-[160px]">
           <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${dotClass}`} aria-hidden />
           <div>
             <p className={`text-sm font-semibold ${textClass}`}>{session.message}</p>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-400 dark:text-slate-500">
               {session.account_id ? `${session.account_id} · ` : ""}
               checked {checked}
             </p>
@@ -61,14 +61,14 @@ export function HeaderBar({ session }: { session: SessionState }) {
         </div>
 
         {/* Divider */}
-        <div className="hidden h-8 w-px bg-slate-200 sm:block" aria-hidden />
+        <div className="hidden h-8 w-px bg-slate-200 sm:block dark:bg-slate-700" aria-hidden />
 
         {/* Account stats */}
         <div className="flex flex-wrap gap-x-6 gap-y-2">
           {STATS.map((s) => (
             <div key={s.key}>
-              <p className="text-xs uppercase tracking-wide text-slate-400">{s.label}</p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-800">
+              <p className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">{s.label}</p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-800 dark:text-slate-50">
                 {money(account?.[s.key] as number | null)}
               </p>
             </div>

@@ -1,7 +1,8 @@
 """FastAPI application entrypoint.
 
 Lifespan: configure logging -> seed settings -> open the IBKR client -> start
-the scheduler. Migrations are applied separately by entrypoint.sh before boot.
+the scheduler -> stop the IBEAM container (to prevent unsolicited MFA on first
+build). Migrations are applied separately by entrypoint.sh before boot.
 """
 from __future__ import annotations
 
@@ -31,6 +32,21 @@ async def lifespan(app: FastAPI):
     client = IBKRClient(settings.ibkr_gateway_url, verify=settings.verify_ssl)
     app.state.ibkr = client
     start_scheduler(client, settings)
+
+    try:
+        import docker
+        dc = docker.from_env()
+        container_name = settings.docker_ibeam_container
+        try:
+            c = dc.containers.get(container_name)
+            if c.status == "running":
+                c.stop()
+                log.info("stopped_ibeam_on_startup", container=container_name)
+        except docker.errors.NotFound:
+            log.warning("ibeam_container_not_found", container=container_name)
+    except Exception as exc:
+        log.warning("docker_unavailable_on_startup", error=str(exc))
+
     try:
         yield
     finally:

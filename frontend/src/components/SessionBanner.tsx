@@ -1,10 +1,10 @@
 import type { SessionState } from "../api/types";
 
 const STYLES: Record<string, string> = {
-  authenticated: "bg-emerald-50 border-emerald-300 text-emerald-900",
-  polling: "bg-emerald-50 border-emerald-300 text-emerald-900",
-  disconnected: "bg-amber-50 border-amber-300 text-amber-900",
-  unknown: "bg-slate-100 border-slate-300 text-slate-700",
+  authenticated: "bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200",
+  polling: "bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200",
+  disconnected: "bg-amber-50 border-amber-300 text-amber-900 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200",
+  unknown: "bg-slate-100 border-slate-300 text-slate-700 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-200",
 };
 
 export function SessionBanner({ session }: { session: SessionState }) {

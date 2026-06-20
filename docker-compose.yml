@@ -25,13 +25,30 @@ services:
 
   ibkr-gateway:
     image: voyz/ibeam:latest
-    restart: unless-stopped
+    restart: "no"
     environment:
       IBEAM_ACCOUNT: ${IBEAM_ACCOUNT:?set IBEAM_ACCOUNT in .env}
       IBEAM_PASSWORD: ${IBEAM_PASSWORD:?set IBEAM_PASSWORD in .env}
-      # Keep the session alive; IBKR still forces a daily re-auth (see README).
-      IBEAM_MAINTENANCE_INTERVAL: ${IBEAM_MAINTENANCE_INTERVAL:-60}
-      IBEAM_PAGE_LOAD_TIMEOUT: ${IBEAM_PAGE_LOAD_TIMEOUT:-30}
+      # Disable periodic auto-maintenance — auth is user-initiated via the backend.
+      # Use a large value (24h) because IBEAM treats 0 as 1 second.
+      IBEAM_MAINTENANCE_INTERVAL: ${IBEAM_MAINTENANCE_INTERVAL:-86400}
+      IBEAM_PAGE_LOAD_TIMEOUT: ${IBEAM_PAGE_LOAD_TIMEOUT:-60}
+      # Prevent automatic retry of failed logins — avoids unsolicited MFA pushes.
+      IBEAM_RESTART_FAILED_SESSIONS: "false"
+      IBEAM_MAX_FAILED_AUTH: "1"
+      # IBKR login page selectors — IBKR changes these periodically.
+      # Override with resilient defaults that work regardless of class names.
+      IBEAM_USER_NAME_EL: NAME@@user_name
+      IBEAM_SUBMIT_EL: CSS_SELECTOR@@button[type="submit"]
+      # Try authentication strategy A — the older, more robust login flow.
+      IBEAM_AUTHENTICATION_STRATEGY: "A"
+      # Give OAuth more time and save screenshots on failure for debugging.
+      IBEAM_OAUTH_TIMEOUT: "60"
+      IBEAM_ERROR_SCREENSHOTS: "true"
+      # Manual 2FA — user approves push on phone, IBEAM polls gateway auth status.
+      IBEAM_MANUAL_TWO_FA: "true"
+      # 2FA input field — IBKR renamed from "bronze" to "silver" in 2026.
+      IBEAM_TWO_FA_INPUT_EL_ID: ID@@xyz-field-silver-response
       # Advanced (optional): to store the password Fernet-encrypted, uncomment the
       # next line and set IBEAM_KEY to a 32-byte url-safe base64 key in .env.
       # Leave it OUT for a plaintext password — an EMPTY key makes login fail.
@@ -40,6 +57,8 @@ services:
       # Widen the gateway's IP allowlist to the Compose network, otherwise it
       # returns "Access Denied" to the backend. Single-file mount (safe).
       - ./gateway/conf.yaml:/srv/clientportal.gw/root/conf.yaml
+      # Mount outputs to access login failure screenshots for debugging.
+      - ./gateway/outputs:/srv/outputs
     healthcheck:
       # Image is Python-based; just confirm the gateway port is accepting TCP.
       test: ["CMD-SHELL", "python -c \"import socket;socket.create_connection(('127.0.0.1',5000),3)\""]
@@ -68,6 +87,17 @@ services:
       POLL_MARKET_SECONDS: ${POLL_MARKET_SECONDS:-300}
       POLL_BURST_SECONDS: ${POLL_BURST_SECONDS:-20}
       POLL_BURST_WINDOW_SECONDS: ${POLL_BURST_WINDOW_SECONDS:-300}
+      POLL_PUBLIC_PRICE_SECONDS: ${POLL_PUBLIC_PRICE_SECONDS:-300}
+      # Must comfortably exceed IBEAM startup (page-load + oauth, ~120s) AND fit
+      # under nginx proxy_read_timeout (180s). 45s was too tight — logins timed
+      # out before the 2FA push could be approved.
+      PULL_LOGIN_TIMEOUT_SECONDS: ${PULL_LOGIN_TIMEOUT_SECONDS:-120}
+      DOCKER_IBEAM_CONTAINER: ${DOCKER_IBEAM_CONTAINER:-options-tracker-ibkr-gateway-1}
+      # IBKR Flex Web Service — one-time setup in IBKR Account Management (see README).
+      IBKR_FLEX_TOKEN: ${IBKR_FLEX_TOKEN:-}
+      IBKR_FLEX_QUERY_ID: ${IBKR_FLEX_QUERY_ID:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       db:
         condition: service_healthy

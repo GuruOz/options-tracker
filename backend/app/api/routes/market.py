@@ -25,7 +25,12 @@ async def get_signals(db: AsyncSession = Depends(get_session)):
             except (KeyError, ValueError, TypeError):
                 pass
     rows = await repo.latest_signals(db)
-    return [r for r in rows if r.underlying_conid in tracked_conids]
+    result = [r for r in rows if r.underlying_conid in tracked_conids]
+    market_rows = await repo.latest_market(db)
+    market_by_conid = {m.conid: m.source for m in market_rows}
+    for r in result:
+        r.source = market_by_conid.get(r.underlying_conid)
+    return result
 
 
 @router.get("/signal/history", response_model=list[SignalPointOut])

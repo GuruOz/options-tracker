@@ -1,13 +1,14 @@
 """APScheduler wiring.
 
-Two phases for the data jobs:
+Two phases for the data jobs (when user is logged in):
   * Startup burst — every `poll_burst_seconds` for `poll_burst_window_seconds`,
-    so the UI populates fast and IV history accumulates quickly. Jobs self-skip
-    until the session authenticates, so bursting also means data appears the
-    moment auth completes rather than up to a steady-cadence later.
+    so the UI populates fast. Jobs self-skip until `user_logged_in` is True.
   * Steady state — after the burst window each job is rescheduled to its
     configured cadence (default 5 min).
-The session heartbeat runs at a fixed cadence the whole time.
+
+The session monitor runs at a fixed cadence, passively checking auth_status
+and releasing any stray authenticated sessions. The public price refresh
+runs independently of IBKR auth state.
 """
 from __future__ import annotations
 
@@ -20,9 +21,11 @@ from app.clients.ibkr import IBKRClient
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.poller.jobs.account import poll_account
-from app.poller.jobs.market import poll_market
+from app.poller.jobs.flex_import import import_flex_trades
+from app.poller.jobs.market import poll_market, refresh_public_prices
 from app.poller.jobs.positions import poll_positions
-from app.poller.jobs.session import heartbeat
+from app.poller.jobs.rolls import build_rolls
+from app.poller.jobs.session import monitor
 from app.poller.jobs.trades import poll_trades
 
 log = get_logger("poller.scheduler")
@@ -70,23 +73,99 @@ def _add_data_job(
     )
 
 
+# Data jobs that participate in the startup burst, mapped to their steady cadence
+# field on Settings. Used to re-arm the burst on user login.
+_BURST_JOBS: dict[str, str] = {
+    "poll_positions": "poll_positions_seconds",
+    "poll_account": "poll_positions_seconds",
+    "poll_trades": "poll_trades_seconds",
+    "poll_market": "poll_market_seconds",
+}
+
+
+def rearm_burst(settings: Settings) -> None:
+    """Re-anchor the startup burst to *now* — called on user-initiated login.
+
+    The burst is otherwise anchored to backend process start, which rarely
+    coincides with an on-demand login (the user may log in hours later). Without
+    re-arming, the data jobs are already at their slow steady cadence by the time
+    the user logs in, so the UI repopulates slowly and IV history accumulates at
+    5-min intervals. Re-arming restarts the fast burst window from now.
+    """
+    if not scheduler.running:
+        return
+    now = datetime.now(timezone.utc)
+    burst = settings.poll_burst_seconds
+    window = settings.poll_burst_window_seconds
+    rearmed = 0
+    for job_id, steady_field in _BURST_JOBS.items():
+        steady_seconds = getattr(settings, steady_field)
+        try:
+            scheduler.reschedule_job(job_id, trigger="interval", seconds=burst)
+        except JobLookupError:
+            continue
+        scheduler.add_job(
+            _settle_job,
+            trigger="date",
+            run_date=now + timedelta(seconds=window),
+            args=[job_id, steady_seconds],
+            id=f"{job_id}_settle",
+            max_instances=1,
+            replace_existing=True,
+        )
+        rearmed += 1
+    log.info("burst_rearmed", jobs=rearmed, burst_seconds=burst, window_seconds=window)
+
+
 def start_scheduler(client: IBKRClient, settings: Settings) -> None:
     now = datetime.now(timezone.utc)
+
     scheduler.add_job(
-        heartbeat,
+        monitor,
         trigger="interval",
         seconds=settings.poll_heartbeat_seconds,
         args=[client],
-        id="session_heartbeat",
+        id="session_monitor",
         max_instances=1,
         coalesce=True,
-        next_run_time=now,  # run immediately on boot
+        next_run_time=now,
+    )
+
+    scheduler.add_job(
+        refresh_public_prices,
+        trigger="interval",
+        seconds=settings.poll_public_price_seconds,
+        args=[client],
+        id="public_price_refresh",
+        max_instances=1,
+        coalesce=True,
+        next_run_time=now + timedelta(seconds=5),
+    )
+
+    scheduler.add_job(
+        build_rolls,
+        trigger="interval",
+        seconds=settings.poll_trades_seconds,
+        args=[client],
+        id="build_rolls",
+        max_instances=1,
+        coalesce=True,
+        next_run_time=now + timedelta(seconds=6),
+    )
+
+    scheduler.add_job(
+        import_flex_trades,
+        trigger="interval",
+        seconds=3600,
+        args=[client],
+        id="flex_import",
+        max_instances=1,
+        coalesce=True,
+        next_run_time=now + timedelta(seconds=3),
     )
 
     burst = settings.poll_burst_seconds
     window = settings.poll_burst_window_seconds
-    # Stagger first runs a few seconds apart so the first heartbeat authenticates
-    # first and the burst calls don't all fire in the same instant.
     _add_data_job(
         poll_positions, "poll_positions", client,
         first_delay=8, burst_seconds=burst, burst_window=window,
@@ -111,7 +190,8 @@ def start_scheduler(client: IBKRClient, settings: Settings) -> None:
     scheduler.start()
     log.info(
         "scheduler_started",
-        heartbeat_seconds=settings.poll_heartbeat_seconds,
+        monitor_seconds=settings.poll_heartbeat_seconds,
+        public_price_seconds=settings.poll_public_price_seconds,
         burst_seconds=burst,
         burst_window_seconds=window,
         steady_market_seconds=settings.poll_market_seconds,

@@ -81,26 +81,26 @@ export function UnderlyingsPanel() {
   const alreadyTracked = new Set(tracked.map((u) => u.conid));
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+    <section className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-        <p className="text-sm font-semibold text-slate-700 shrink-0">Tracked underlyings</p>
+        <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 shrink-0">Tracked underlyings</p>
 
         {/* Current tracked list */}
         <div className="flex flex-wrap gap-2">
           {tracked.length === 0 && (
-            <span className="text-xs text-slate-400 italic">None — add a ticker below</span>
+            <span className="text-xs text-slate-400 dark:text-slate-500 italic">None — add a ticker below</span>
           )}
           {tracked.map((u) => (
             <span
               key={u.conid}
-              className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+              className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200"
             >
               {u.symbol}
               <button
                 onClick={() => removeMutation.mutate(u.conid)}
                 disabled={removeMutation.isPending}
                 aria-label={`Remove ${u.symbol}`}
-                className="ml-0.5 text-slate-400 hover:text-red-500 leading-none"
+                className="ml-0.5 text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 leading-none"
               >
                 ×
               </button>
@@ -120,19 +120,19 @@ export function UnderlyingsPanel() {
               setOpen(true);
             }}
             onFocus={() => query.length >= 1 && setOpen(true)}
-            className="w-36 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            className="w-36 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-blue-900"
           />
 
           {open && debouncedQ.length >= 1 && (
             <div
               ref={dropdownRef}
-              className="absolute right-0 top-full z-20 mt-1 w-72 rounded-xl border border-slate-200 bg-white shadow-lg"
+              className="absolute right-0 top-full z-20 mt-1 w-72 rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800"
             >
               {searching && (
-                <p className="px-3 py-2 text-xs text-slate-400">Searching…</p>
+                <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">Searching…</p>
               )}
               {!searching && searchResults.length === 0 && (
-                <p className="px-3 py-2 text-xs text-slate-400">No results</p>
+                <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">No results</p>
               )}
               {searchResults.map((r) => {
                 const added = alreadyTracked.has(r.conid);
@@ -141,16 +141,16 @@ export function UnderlyingsPanel() {
                     key={r.conid}
                     disabled={added || addMutation.isPending}
                     onClick={() => addMutation.mutate(r)}
-                    className={`flex w-full items-start gap-3 px-3 py-2 text-left hover:bg-slate-50 first:rounded-t-xl last:rounded-b-xl disabled:cursor-default ${
+                    className={`flex w-full items-start gap-3 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 first:rounded-t-xl last:rounded-b-xl disabled:cursor-default ${
                       added ? "opacity-40" : ""
                     }`}
                   >
-                    <span className="mt-0.5 min-w-[2.5rem] text-xs font-bold text-slate-800">
+                    <span className="mt-0.5 min-w-[2.5rem] text-xs font-bold text-slate-800 dark:text-slate-100">
                       {r.symbol}
                     </span>
-                    <span className="truncate text-xs text-slate-500">{r.description}</span>
+                    <span className="truncate text-xs text-slate-500 dark:text-slate-400">{r.description}</span>
                     {added && (
-                      <span className="ml-auto shrink-0 text-xs text-emerald-600">✓</span>
+                      <span className="ml-auto shrink-0 text-xs text-emerald-600 dark:text-emerald-400">✓</span>
                     )}
                   </button>
                 );
