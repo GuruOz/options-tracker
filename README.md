@@ -20,7 +20,8 @@ this repo and run it yourself.
 ```
 browser ──HTTPS──▶ nginx ──/api,/ws──▶ backend ──┬─▶ ibkr-gateway ──read-only──▶ IBKR
  (your machine)   (frontend)          (FastAPI)  ├─▶ PostgreSQL
-                                                 └─▶ Redis (optional)
+                                                  ├─▶ Redis (optional)
+                                                  └─▶ Docker socket (restart gateway on demand)
 ```
 
 Everything except the dashboard port runs on a **private Docker network**. The
@@ -29,8 +30,8 @@ browser never contacts IBKR directly. See the architecture proposal for details.
 | Container | Role |
 |-----------|------|
 | `frontend` | nginx — serves the SPA and reverse-proxies `/api` + `/ws`. The only host-published port. |
-| `backend` | FastAPI — polls the gateway, persists to Postgres, computes analytics, serves REST + WebSocket. |
-| `ibkr-gateway` | [IBEAM](https://github.com/Voyz/ibeam) — runs the IBKR Client Portal Gateway headless and keeps the session alive. |
+| `backend` | FastAPI — polls the gateway on demand, persists to Postgres, computes analytics, serves REST + WebSocket. |
+| `ibkr-gateway` | [IBEAM](https://github.com/Voyz/ibeam) — runs the IBKR Client Portal Gateway headless. Auth is user-initiated, not persistent. |
 | `db` | PostgreSQL — durable storage on a named volume. |
 | `redis` | *(optional)* cache / rate-limit buckets / job queue. Off by default. |
 
@@ -50,10 +51,15 @@ docker compose up --build
 
 Then open **http://127.0.0.1:8080**.
 
-On first launch the gateway will try to log in. **If your account has 2FA, you
-must approve the push notification in the IBKR mobile app.** Until you do, the
-dashboard shows a *"Gateway disconnected — re-authenticate"* banner. This is
-normal — once approved, polling resumes automatically.
+The dashboard starts unauthenticated — no session is held. Click **"Pull Fresh
+Data"** in the header bar when you want live data. The gateway will restart,
+trigger IBKR's 2FA push, and the session comes up once you approve the
+notification. See [IBKR session behaviour](#ibkr-session-behaviour) below for
+the full flow.
+
+**Paper vs. live** is chosen by which IBKR username you put in `IBEAM_ACCOUNT`.
+IBKR paper accounts have their own separate login. Validate with your paper
+account first.
 
 To run with Redis enabled:
 
@@ -63,18 +69,38 @@ docker compose --profile redis up --build   # and set REDIS_URL in .env
 
 ---
 
-## IBKR session behaviour (read this)
+## IBKR session behaviour
 
-- **2FA on first login.** If enabled on your account, the first authentication of
-  each session needs a manual approval on your phone. There is no way to make a
-  2FA account fully unattended — that's an IBKR rule.
-- **Daily forced re-auth.** IBKR expires the session around its daily maintenance
-  window (plus weekly server resets). The app treats *disconnected* as a normal,
-  recurring state: it pauses polling, shows the re-auth banner, and resumes
-  automatically once the gateway is authenticated again.
-- **Paper vs live.** This is chosen by **which IBKR username** you put in
-  `IBEAM_ACCOUNT`. IBKR paper accounts have their own separate login. **Validate
-  with your paper account first.**
+**Only one IBKR brokerage (iServer) session can be active at a time**, so a
+persistently authenticated gateway locks you out of the IBKR mobile app. This app
+is **unauthenticated by default** and only holds a session when you explicitly
+ask for one.
+
+- **No background keep-alive.** No recurring `POST /tickle`, no auto-reauth, no
+  auto-login on startup. A passive monitor checks auth status but never contests
+  the session — it releases any stray authenticated session immediately.
+- **User-initiated login.** Click "Pull Fresh Data" in the dashboard header. The
+  backend restarts the IBEAM container, which logs in and triggers IBKR's 2FA
+  push. Approve the notification in your IBKR mobile app and the session comes up
+  within seconds. All positions, balances, open orders, P&L, and IBKR-sourced
+  market data are batch-pulled and persisted.
+- **Session stays active** while you're browsing the dashboard. No forced logout.
+- **Manual logout.** Click "Logout & Release" when you're done. The session is
+  released and your IBKR mobile app works again immediately.
+- **Public price fallback.** Prices and implied volatility for tracked underlyings
+  refresh every 5 minutes from a free public source (yfinance) — no IBKR session
+  needed. If the source is unreachable, the last cached values are served.
+- **Data freshness.** Every API response carries a `source` field
+  (`ibkr_live` / `public` / `cache`) and a `last_updated` timestamp so you can
+  tell fresh data from stale at a glance.
+
+### Login trigger mechanism
+
+The backend needs to restart the IBEAM container to trigger a fresh browser-based
+login. This requires mounting the Docker socket into the backend container (see
+`docker-compose.yml`). For a self-hosted single-user app on a private network,
+this is an accepted pattern. To harden, use a Docker socket proxy that limits
+access to only the `ibkr-gateway` container's restart endpoint.
 
 ---
 
@@ -96,6 +122,12 @@ settings — signal weights/thresholds, the beta map, alert thresholds, tracked
 underlyings — are stored in the database and editable at runtime via the
 settings API (`GET`/`PUT /api/settings`); defaults reproduce the values in the
 appendix below.
+
+Key env vars for session behaviour:
+- `IBEAM_MAINTENANCE_INTERVAL=0` — disables IBEAM's periodic auto-maintenance
+- `POLL_PUBLIC_PRICE_SECONDS=300` — cadence for yfinance price refresh
+- `PULL_LOGIN_TIMEOUT_SECONDS=45` — max seconds to wait for 2FA during login
+- `DOCKER_IBEAM_CONTAINER` — container name for on-demand gateway restart
 
 ---
 

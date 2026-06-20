@@ -67,8 +67,10 @@ The income panel must **replicate this monthly → YTD layout** and add a **with
 2. ✅ Data ingestion (IBKR client, poller jobs, normalize, positions/account/trades APIs)
 3. ✅ Analytics math (indicators, Greeks BS fallback, signal scorer — 35 tests)
 4. ✅ Market context + Signal panels (market poller, `/api/market`, `/api/signals`)
-5. ⬜ Cockpit enrichment (DTE / cushion / extrinsic / decay curve / status pill / roll-chain)
-6. ⬜ Alerts panel (`/api/alerts` + AlertsPanel)
-7. ⬜ Portfolio risk panel (beta-weighted delta math → `/api/risk` + RiskPanel)
+5. 🟨 Cockpit enrichment (DTE / cushion / extrinsic / status pill ✅ · decay curve ⬜ · roll-chain grouping ✅)
+6. ✅ Alerts panel (`/api/alerts` + AlertsPanel)
+7. ✅ Portfolio risk panel (beta-weighted delta math → `/api/risk` + RiskPanel)
 8. ⬜ Premium income panel (`/api/income` + IncomePanel + withdrawal tracking)
-9. ⬜ Flex / CSV importer
+9. 🟨 Flex / CSV importer (CSV upload ✅ · Flex Web Service automated import ✅ · old flex XML parser removed)
+
+> Live pending-work checklist: [TODO.md](TODO.md).

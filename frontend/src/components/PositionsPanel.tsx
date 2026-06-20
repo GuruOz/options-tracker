@@ -1,23 +1,90 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getJSON } from "../api/client";
-import type { Position } from "../api/types";
+import type { Position, RollChain, Trade } from "../api/types";
 
 const num = (v: number | null, d = 2) => (v == null ? "—" : v.toFixed(d));
 const money = (v: number | null) =>
   v == null ? "—" : v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+const percent = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
+
+function StatusPill({ status }: { status: string | null }) {
+  if (!status) return <span className="text-slate-400">—</span>;
+  let color = "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400";
+  if (status === "TAKE PROFIT") color = "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+  else if (status === "AT RISK") color = "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+  else if (status === "EXPIRING") color = "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
+  return <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide ${color}`}>{status}</span>;
+}
 
 export function PositionsPanel() {
-  const { data } = useQuery({
+  const [showClosed, setShowClosed] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState("");
+  const queryClient = useQueryClient();
+
+  const { data: positions, isFetching: posFetching } = useQuery({
     queryKey: ["positions"],
     queryFn: () => getJSON<Position[]>("/api/positions"),
   });
-  const rows = data ?? [];
+  const { data: chains } = useQuery({
+    queryKey: ["chains"],
+    queryFn: () => getJSON<RollChain[]>("/api/chains?status=open"),
+  });
+  const { data: closedChains, isFetching: closedLoading } = useQuery({
+    queryKey: ["chains", "closed"],
+    queryFn: () => getJSON<RollChain[]>("/api/chains?status=closed"),
+    enabled: showClosed,
+  });
+  const { data: optionTrades } = useQuery({
+    queryKey: ["trades", "options"],
+    queryFn: () => getJSON<Trade[]>("/api/trades/options"),
+  });
+
+  const rows = positions ?? [];
+  const chainMap = new Map<string, RollChain>();
+  for (const c of chains ?? []) {
+    chainMap.set(c.chain_id, c);
+  }
+
+  const grouped = new Map<string, Position[]>();
+  const ungrouped: Position[] = [];
+  for (const p of rows) {
+    if (p.chain_id) {
+      const arr = grouped.get(p.chain_id) ?? [];
+      arr.push(p);
+      grouped.set(p.chain_id, arr);
+    } else {
+      ungrouped.push(p);
+    }
+  }
+
+  const chainEntries = Array.from(grouped.entries());
+  const closedList = closedChains ?? [];
 
   return (
     <section className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-      <h2 className="mb-3 text-base font-semibold text-slate-800 dark:text-slate-100">
-        Open positions{" "}
-        <span className="text-sm font-normal text-slate-400 dark:text-slate-500">({rows.length})</span>
+      <h2 className="mb-3 flex items-center gap-3 text-base font-semibold text-slate-800 dark:text-slate-100">
+        <span>
+          Open positions{" "}
+          <span className="text-sm font-normal text-slate-400 dark:text-slate-500">
+            ({rows.length}{chainEntries.length > 0 ? ` · ${chainEntries.length} chain${chainEntries.length > 1 ? "s" : ""}` : ""})
+          </span>
+        </span>
+        <button
+          onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ["positions"] });
+            queryClient.invalidateQueries({ queryKey: ["chains"] });
+            queryClient.invalidateQueries({ queryKey: ["chains", "closed"] });
+            queryClient.invalidateQueries({ queryKey: ["trades", "options"] });
+            queryClient.invalidateQueries({ queryKey: ["alerts"] });
+            queryClient.invalidateQueries({ queryKey: ["risk"] });
+            queryClient.invalidateQueries({ queryKey: ["account"] });
+          }}
+          disabled={posFetching}
+          className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-500 transition-colors hover:bg-slate-200 disabled:opacity-50 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+        >
+          {posFetching ? "Refreshing…" : "Refresh"}
+        </button>
       </h2>
       {rows.length === 0 ? (
         <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -26,48 +93,249 @@ export function PositionsPanel() {
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">
-              <th className="py-2 pr-3">Symbol</th>
-              <th className="pr-3">Type</th>
-              <th className="pr-3">Strike</th>
-              <th className="pr-3">Expiry</th>
-              <th className="pr-3 text-right">Qty</th>
-              <th className="pr-3 text-right">Mark</th>
-              <th className="pr-3 text-right">Mkt val</th>
-              <th className="pr-3 text-right">Unreal P&amp;L</th>
-              <th className="pr-3 text-right">Δ</th>
-              <th className="pr-3 text-right">Θ</th>
-              <th className="text-right">IV</th>
+            <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700">
+              <th className="py-2 pr-3" title="Underlying ticker. 🔗 marks a position that belongs to a roll chain.">Symbol</th>
+              <th className="pr-3" title="Security type, plus the option right (P/C) and strike.">Type</th>
+              <th className="pr-3" title="Lifecycle pill: TAKE PROFIT (>=70% premium captured), AT RISK (cushion < 3%), or EXPIRING (<=2 DTE).">Status</th>
+              <th className="pr-3 text-right" title="Days to expiration (calendar days until the contract expires).">DTE</th>
+              <th className="pr-3 text-right" title="Signed contract quantity. Negative = short (sold).">Qty</th>
+              <th className="pr-3 text-right" title="Current mark price of the option, per share.">Last</th>
+              <th className="pr-3 text-right" title="Live spot price of the underlying stock/ETF. Only shown for tracked underlyings.">Spot</th>
+              <th className="pr-3 text-right" title="Your average entry price per share (avg cost / 100).">My Avg</th>
+              <th className="pr-3 text-right" title="In-the-money value: total $ across all contracts (per-share intrinsic x 100 x |qty|). Needs the spot price.">Intrinsic ($)</th>
+              <th className="pr-3 text-right" title="Time value remaining: total $ across all contracts (mark - intrinsic, x 100 x |qty|). This is what decays to zero by expiry.">Extrinsic ($)</th>
+              <th className="pr-3 text-right" title="Distance from spot to strike. Put: (spot - strike) / spot. Call: (strike - spot) / spot. Measures room before the strike - independent of P&L.">Cushion</th>
+              <th className="pr-3 text-right" title="% of the premium you've captured so far: (credit received - cost to buy back) / credit received.">Captured</th>
+              <th className="pr-3 text-right" title="Unrealized profit/loss on the position, in account currency.">Unreal P&amp;L</th>
+              <th className="pr-3 text-right" title="Delta - per-share price sensitivity to a $1 move in the underlying.">Δ</th>
+              <th className="text-right" title="Theta - estimated daily time decay, per share.">Θ</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((p) => (
-              <tr key={p.conid} className="border-t border-slate-100 dark:border-slate-700">
-                <td className="py-2 pr-3 font-medium text-slate-800 dark:text-slate-100">{p.symbol ?? "—"}</td>
-                <td className="pr-3 dark:text-slate-300">
-                  {p.sec_type}
-                  {p.right ? ` ${p.right}` : ""}
-                </td>
-                <td className="pr-3 dark:text-slate-300">{p.strike ?? "—"}</td>
-                <td className="pr-3 dark:text-slate-300">{p.expiry ?? "—"}</td>
-                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(p.position, 0)}</td>
-                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(p.mark)}</td>
-                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{money(p.market_value)}</td>
-                <td
-                  className={`pr-3 text-right tabular-nums ${
-                    (p.unrealized_pnl ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
-                  }`}
-                >
-                  {money(p.unrealized_pnl)}
-                </td>
-                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(p.delta)}</td>
-                <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(p.theta)}</td>
-                <td className="text-right tabular-nums dark:text-slate-300">{p.iv == null ? "—" : num(p.iv, 1)}</td>
-              </tr>
+            {chainEntries.map(([chainId, chainPositions]) => {
+              const chain = chainMap.get(chainId);
+              return (
+                <ChainGroup
+                  key={chainId}
+                  chainId={chainId}
+                  chain={chain}
+                  positions={chainPositions}
+                />
+              );
+            })}
+            {ungrouped.map((p) => (
+              <PositionRow key={p.conid} p={p} />
             ))}
           </tbody>
         </table>
       )}
+
+      {/* Option trades (all historical) */}
+      <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
+        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
+          Option trades{" "}
+          <span className="text-xs font-normal text-slate-400">
+            ({(optionTrades ?? []).length} total)
+          </span>
+        </h3>
+
+        <div className="mb-3 flex items-center gap-3">
+          <label className="cursor-pointer rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50">
+            Import CSV
+            <input
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setUploadMsg("Uploading...");
+                try {
+                  const form = new FormData();
+                  form.append("file", file);
+                  const res = await fetch("/api/trades/upload", {
+                    method: "POST",
+                    body: form,
+                  });
+                  const json = await res.json();
+                  setUploadMsg(json.message ?? json.status);
+                  queryClient.invalidateQueries({ queryKey: ["trades", "options"] });
+                  queryClient.invalidateQueries({ queryKey: ["chains"] });
+                  queryClient.invalidateQueries({ queryKey: ["chains", "closed"] });
+                } catch {
+                  setUploadMsg("Upload failed.");
+                }
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <span className="text-[10px] text-slate-400">Download Activity Statement CSV from IBKR Client Portal → Reports → Activity</span>
+          {uploadMsg && <span className="text-[10px] font-medium text-slate-500">{uploadMsg}</span>}
+        </div>
+        {(optionTrades ?? []).length === 0 ? (
+          <p className="text-xs text-slate-400 dark:text-slate-500">
+            No option trades found. IBKR only returns ~7 days of trades via the API.
+            Older history requires the Flex/CSV importer.
+          </p>
+        ) : (
+          <div className="max-h-96 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-900">
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="pr-3">Symbol</th>
+                  <th className="pr-3">Side</th>
+                  <th className="pr-3">Right</th>
+                  <th className="pr-3 text-right">Strike</th>
+                  <th className="pr-3">Expiry</th>
+                  <th className="pr-3 text-right">Qty</th>
+                  <th className="pr-3 text-right">Price</th>
+                  <th className="pr-3 text-right">Comm</th>
+                  <th className="text-right">Exec ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {optionTrades!.map((t) => (
+                  <tr key={t.exec_id} className="border-b border-slate-50 dark:border-slate-800/50 last:border-0">
+                    <td className="py-1.5 pr-3 text-xs text-slate-500 whitespace-nowrap">
+                      {t.exec_time ? new Date(t.exec_time).toLocaleString() : "—"}
+                    </td>
+                    <td className="pr-3 font-medium text-slate-700 dark:text-slate-300">{t.symbol ?? "—"}</td>
+                    <td className={`pr-3 text-xs font-semibold ${t.side === "S" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                      {t.side === "S" ? "SELL" : t.side === "B" ? "BUY" : t.side ?? "—"}
+                    </td>
+                    <td className="pr-3 dark:text-slate-300">{t.right ?? "—"}</td>
+                    <td className="pr-3 text-right tabular-nums dark:text-slate-300">{t.strike != null ? t.strike : "—"}</td>
+                    <td className="pr-3 text-xs text-slate-500 whitespace-nowrap">
+                      {t.expiry ? new Date(t.expiry).toLocaleDateString() : "—"}
+                    </td>
+                    <td className="pr-3 text-right tabular-nums dark:text-slate-300">{t.qty != null ? t.qty : "—"}</td>
+                    <td className="pr-3 text-right tabular-nums dark:text-slate-300">{t.price != null ? t.price : "—"}</td>
+                    <td className="pr-3 text-right tabular-nums text-slate-400">{t.commission != null ? t.commission.toFixed(2) : "—"}</td>
+                    <td className="text-right font-mono text-[10px] text-slate-400">{t.exec_id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Closed chains (historical) */}
+      <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
+        <button
+          onClick={() => setShowClosed(!showClosed)}
+          className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
+        >
+          <span className={`transform transition-transform ${showClosed ? "rotate-90" : ""}`}>&#9654;</span>
+          Closed chains
+          <span className="text-xs font-normal text-slate-400">
+            ({showClosed ? closedList.length : "..."})
+          </span>
+        </button>
+        {showClosed && (
+          <div className="mt-3">
+            {closedLoading ? (
+              <p className="text-xs text-slate-400">Loading...</p>
+            ) : closedList.length === 0 ? (
+              <p className="text-xs text-slate-400">No closed chains yet.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700">
+                    <th className="py-2 pr-3">Chain</th>
+                    <th className="pr-3">Symbol</th>
+                    <th className="pr-3">Right</th>
+                    <th className="pr-3 text-right">Legs</th>
+                    <th className="pr-3 text-right">Opened</th>
+                    <th className="pr-3 text-right">Closed</th>
+                    <th className="text-right">Cumulative credit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {closedList.map((c) => (
+                    <tr key={c.chain_id} className="border-b border-slate-50 dark:border-slate-800/50 last:border-0">
+                      <td className="py-2 pr-3 font-mono text-[10px] text-slate-400">{c.chain_id}</td>
+                      <td className="pr-3 font-medium text-slate-700 dark:text-slate-300">{c.underlying_symbol ?? "—"}</td>
+                      <td className="pr-3 text-slate-500 dark:text-slate-400">{c.right ?? "—"}</td>
+                      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{c.leg_count}</td>
+                      <td className="pr-3 text-right text-xs text-slate-400">{c.opened_at ? new Date(c.opened_at).toLocaleDateString() : "—"}</td>
+                      <td className="pr-3 text-right text-xs text-slate-400">{c.closed_at ? new Date(c.closed_at).toLocaleDateString() : "—"}</td>
+                      <td className={`text-right tabular-nums font-semibold ${(c.cumulative_credit ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                        {money(c.cumulative_credit)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
     </section>
+  );
+}
+
+function ChainGroup({ chainId, chain, positions }: { chainId: string; chain: RollChain | undefined; positions: Position[] }) {
+  return (
+    <>
+      <tr className="bg-slate-50 dark:bg-slate-800/50">
+        <td colSpan={15} className="py-1.5 px-0">
+          <div className="flex items-center gap-3 text-xs">
+            <span className="text-amber-600 dark:text-amber-400 font-semibold">🔗 Chain</span>
+            <span className="text-slate-500 dark:text-slate-400 font-mono text-[10px]">{chainId}</span>
+            {chain?.underlying_symbol && (
+              <span className="text-slate-600 dark:text-slate-300 font-medium">{chain.underlying_symbol}</span>
+            )}
+            {chain?.cumulative_credit != null && (
+              <span className={`font-semibold tabular-nums ${chain.cumulative_credit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                Cumulative {money(chain.cumulative_credit)}
+              </span>
+            )}
+            <span className="text-slate-400 dark:text-slate-500">{positions.length} leg{positions.length > 1 ? "s" : ""}</span>
+          </div>
+        </td>
+      </tr>
+      {positions.map((p) => (
+        <PositionRow key={p.conid} p={p} />
+      ))}
+    </>
+  );
+}
+
+function PositionRow({ p }: { p: Position }) {
+  const myAvg = p.avg_cost != null ? p.avg_cost / 100 : null;
+  const intrinsicMoney = p.intrinsic_value != null && p.position != null ? p.intrinsic_value * 100 * Math.abs(p.position) : null;
+  const extrinsicMoney = p.extrinsic_value != null && p.position != null ? p.extrinsic_value * 100 * Math.abs(p.position) : null;
+
+  return (
+    <tr className="border-b border-slate-50 dark:border-slate-800/50 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+      <td className="py-2 pr-3 font-medium text-slate-800 dark:text-slate-100">
+        {p.symbol ?? "—"}
+        {p.chain_id && <span className="ml-2 text-[10px] text-slate-400" title="Roll Chain">🔗</span>}
+      </td>
+      <td className="pr-3 dark:text-slate-300">
+        {p.sec_type} {p.right ? ` ${p.right}` : ""} {p.strike ? p.strike : ""}
+      </td>
+      <td className="pr-3"><StatusPill status={p.status} /></td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{p.dte != null ? p.dte : "—"}</td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(p.position, 0)}</td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(p.mark)}</td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(p.underlying_price)}</td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(myAvg)}</td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{money(intrinsicMoney)}</td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{money(extrinsicMoney)}</td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{percent(p.cushion_pct)}</td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{percent(p.premium_captured_pct)}</td>
+      <td
+        className={`pr-3 text-right tabular-nums ${
+          (p.unrealized_pnl ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
+        }`}
+      >
+        {money(p.unrealized_pnl)}
+      </td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(p.delta)}</td>
+      <td className="text-right tabular-nums dark:text-slate-300">{num(p.theta)}</td>
+    </tr>
   );
 }
