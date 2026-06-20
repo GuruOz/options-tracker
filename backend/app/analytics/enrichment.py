@@ -1,0 +1,125 @@
+"""Business logic to enrich raw PositionSnapshot rows with derived cockpit metrics."""
+from __future__ import annotations
+
+from datetime import date, datetime, timezone
+from typing import Any
+
+from app.db.models import PositionSnapshot, MarketSnapshot
+from app.schemas.responses import PositionOut
+
+
+def get_intrinsic_value(right: str | None, strike: float | None, underlying_price: float | None) -> float:
+    if not right or strike is None or underlying_price is None:
+        return 0.0
+    r = right.upper()
+    s = float(strike)
+    u = float(underlying_price)
+    if r == "P":
+        return max(0.0, s - u)
+    elif r == "C":
+        return max(0.0, u - s)
+    return 0.0
+
+
+def enrich_positions(
+    positions: list[PositionSnapshot],
+    markets: list[MarketSnapshot],
+    roll_chains: dict[int, str],
+) -> list[PositionOut]:
+    market_by_symbol = {m.symbol: m for m in markets if m.symbol}
+    today = datetime.now(timezone.utc).date()
+    out = []
+
+    for p in positions:
+        # Convert to dictionary (similar to what Pydantic from_attributes does) to use as base
+        data: dict[str, Any] = {
+            "conid": p.conid,
+            "symbol": p.symbol,
+            "sec_type": p.sec_type,
+            "right": p.right,
+            "strike": p.strike,
+            "expiry": p.expiry,
+            "position": p.position,
+            "avg_cost": p.avg_cost,
+            "mark": p.mark,
+            "market_value": p.market_value,
+            "unrealized_pnl": p.unrealized_pnl,
+            "delta": p.delta,
+            "gamma": p.gamma,
+            "theta": p.theta,
+            "vega": p.vega,
+            "iv": p.iv,
+            "greeks_source": p.greeks_source,
+            "snapshot_ts": p.snapshot_ts,
+        }
+
+        # Roll chain
+        data["chain_id"] = roll_chains.get(p.conid)
+
+        # DTE
+        if p.expiry:
+            dte = (p.expiry - today).days
+            data["dte"] = max(0, dte)
+        else:
+            data["dte"] = None
+
+        # Underlying spot price (only if we track this underlier).
+        underlying_price = None
+        if p.symbol and p.symbol in market_by_symbol:
+            underlying_price = market_by_symbol[p.symbol].price
+        data["underlying_price"] = (
+            float(underlying_price) if underlying_price is not None else None
+        )
+
+        # Intrinsic / extrinsic split (per share). We need the underlying spot to
+        # split the mark; without it, report None rather than fabricating a 0
+        # intrinsic — that would mislabel a deep-ITM option as "all extrinsic".
+        if (
+            p.sec_type in ("OPT", "FOP", "WAR")
+            and p.mark is not None
+            and underlying_price is not None
+        ):
+            intrinsic = get_intrinsic_value(p.right, p.strike, underlying_price)
+            data["intrinsic_value"] = intrinsic
+            data["extrinsic_value"] = max(0.0, float(p.mark) - intrinsic)
+        else:
+            data["intrinsic_value"] = None
+            data["extrinsic_value"] = None
+
+        # Premium Captured
+        # avg_cost for a short position (credit) is positive.
+        # It's usually the total cash amount per contract.
+        # mark is the per-share price. We normalize mark to match avg_cost magnitude (assumes 100 multiplier).
+        if p.position is not None and float(p.position) < 0 and p.avg_cost is not None and float(p.avg_cost) > 0 and p.mark is not None:
+            current_cost_per_contract = float(p.mark) * 100.0
+            data["premium_captured_pct"] = (float(p.avg_cost) - current_cost_per_contract) / float(p.avg_cost)
+        else:
+            data["premium_captured_pct"] = None
+
+        # Cushion %
+        if p.position is not None and float(p.position) < 0 and p.strike is not None and underlying_price is not None and float(underlying_price) > 0:
+            u = float(underlying_price)
+            s = float(p.strike)
+            if p.right == "P" or p.right == "PUT":
+                data["cushion_pct"] = (u - s) / u
+            elif p.right == "C" or p.right == "CALL":
+                data["cushion_pct"] = (s - u) / u
+            else:
+                data["cushion_pct"] = None
+        else:
+            data["cushion_pct"] = None
+
+        # Status rules
+        status = "OPEN"
+        if data["premium_captured_pct"] is not None and data["premium_captured_pct"] >= 0.7:
+            status = "TAKE PROFIT"
+        elif data["cushion_pct"] is not None and data["cushion_pct"] < 0.03:
+            status = "AT RISK"
+        elif data["dte"] is not None and data["dte"] <= 2:
+            status = "EXPIRING"
+            
+        data["status"] = status
+
+        out.append(PositionOut.model_validate(data))
+
+    return out

@@ -1,8 +1,8 @@
 """In-memory gateway/session state plus a WebSocket broadcast manager.
 
-The session lifecycle (see README) treats DISCONNECTED as a normal recurring
-state. The poller updates `session_state` and broadcasts changes so the UI can
-show a clear re-authenticate banner without polling the backend.
+Session lifecycle is user-driven: login → pull data → browse → manual logout.
+No background keep-alive (no tickle, no auto-reauthenticate). A passive monitor
+releases any stray authenticated session for mobile.
 """
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ class GatewayStatus(str, Enum):
     UNKNOWN = "unknown"
     DISCONNECTED = "disconnected"
     AUTHENTICATED = "authenticated"
-    POLLING = "polling"
+    PULLING = "pulling"
+    LOGGING_IN = "logging_in"
 
 
 @dataclass
@@ -28,16 +29,29 @@ class SessionState:
     account_id: str | None = None
     message: str = "Starting up."
     last_checked: str | None = None
+    user_logged_in: bool = False
+    last_pull: str | None = None
+    pull_source: str | None = None
+    # ISO timestamp of the last user-initiated login click. Lets the passive
+    # monitor distinguish a late-completing user login (to adopt) from a stray
+    # session (to release) within a short window.
+    login_requested_at: str | None = None
 
     def update(self, **changes) -> bool:
         """Apply changes; return True if anything user-visible changed."""
-        before = (self.status, self.authenticated, self.connected,
-                  self.competing, self.account_id, self.message)
+        before = (
+            self.status, self.authenticated, self.connected,
+            self.competing, self.account_id, self.message,
+            self.user_logged_in, self.last_pull, self.pull_source,
+        )
         for key, value in changes.items():
             setattr(self, key, value)
         self.last_checked = datetime.now(timezone.utc).isoformat()
-        after = (self.status, self.authenticated, self.connected,
-                 self.competing, self.account_id, self.message)
+        after = (
+            self.status, self.authenticated, self.connected,
+            self.competing, self.account_id, self.message,
+            self.user_logged_in, self.last_pull, self.pull_source,
+        )
         return before != after
 
     def to_dict(self) -> dict:

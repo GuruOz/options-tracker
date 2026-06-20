@@ -29,6 +29,16 @@ class PositionOut(_ORM):
     iv: float | None = None
     greeks_source: str | None = None
     snapshot_ts: datetime | None = None
+    dte: int | None = None
+    underlying_price: float | None = None
+    premium_captured_pct: float | None = None
+    cushion_pct: float | None = None
+    intrinsic_value: float | None = None
+    extrinsic_value: float | None = None
+    status: str | None = None
+    chain_id: str | None = None
+    source: str | None = None
+    last_updated: datetime | None = None
 
 
 class AccountSummaryOut(_ORM):
@@ -40,6 +50,8 @@ class AccountSummaryOut(_ORM):
     buying_power: float | None = None
     cash: float | None = None
     leverage: float | None = None
+    source: str | None = None
+    last_updated: datetime | None = None
 
 
 class TradeOut(_ORM):
@@ -69,6 +81,7 @@ class MarketOut(_ORM):
     rsi14: float | None = None
     sma50: float | None = None
     sma200: float | None = None
+    source: str | None = None
 
 
 class SignalOut(_ORM):
@@ -78,9 +91,46 @@ class SignalOut(_ORM):
     composite_score: float | None = None
     verdict: str | None = None
     sub_scores: dict | None = None
+    source: str | None = None
 
 
 class SignalPointOut(_ORM):
     ts: datetime | None = None
     composite_score: float | None = None
     verdict: str | None = None
+
+
+class RiskPositionOut(BaseModel):
+    symbol: str | None = None
+    sec_type: str | None = None
+    right: str | None = None
+    strike: float | None = None
+    beta: float | None = None
+    delta_dollars: float | None = None
+    beta_weighted_delta_dollars: float | None = None
+    scenario_pnl: float | None = None
+
+
+class AssignmentOut(BaseModel):
+    total_obligation: float | None = None
+    cash: float | None = None
+    coverage_ratio: float | None = None
+    short_put_count: int = 0
+
+
+class EquityPointOut(BaseModel):
+    ts: datetime | None = None
+    net_liquidation: float | None = None
+
+
+class RiskOut(BaseModel):
+    scenario_move: float
+    index_symbol: str | None = None
+    net_liquidation: float | None = None
+    beta_weighted_delta_dollars: float | None = None
+    gross_delta_dollars: float | None = None
+    scenario_pnl: float | None = None
+    scenario_pnl_pct: float | None = None
+    assignment: AssignmentOut
+    positions: list[RiskPositionOut] = []
+    equity_curve: list[EquityPointOut] = []

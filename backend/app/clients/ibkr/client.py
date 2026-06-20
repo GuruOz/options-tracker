@@ -159,6 +159,125 @@ class IBKRClient:
                 break
         return out
 
+    async def pull_all(self, account_id: str) -> dict:
+        """Batch-pull every auth-required resource and return a result dict.
+
+        Each section is pulled independently so one failure doesn't block
+        the rest. Returns per-resource status, timestamps, and raw payloads.
+        """
+        from datetime import datetime, timezone
+        from app.clients.ibkr.normalize import (
+            normalize_position, normalize_summary, normalize_trade,
+            parse_snapshot_row, parse_underlying_quote,
+        )
+        from app.clients.ibkr.fields import UNDERLYING_FIELD_CODES
+
+        result: dict = {
+            "pull_ts": datetime.now(timezone.utc).isoformat(),
+            "positions": {"status": "skipped", "count": 0, "options": 0},
+            "account": {"status": "skipped"},
+            "trades": {"status": "skipped", "count": 0},
+            "market": {"status": "skipped", "count": 0},
+        }
+
+        try:
+            raw_positions = await self.all_positions(account_id)
+            normalized = [normalize_position(p) for p in raw_positions]
+            option_conids = [
+                n["conid"]
+                for n in normalized
+                if n["conid"] and (n.get("sec_type") or "").upper() in ("OPT", "FOP", "WAR")
+            ]
+            greeks: dict[int, dict] = {}
+            if option_conids:
+                try:
+                    rows = await self.snapshot_with_warmup(option_conids)
+                    for row in rows:
+                        c = row.get("conid")
+                        if c is not None:
+                            greeks[int(c)] = parse_snapshot_row(row)
+                except (IBKRError, IBKRAuthError):
+                    pass
+            result["positions"] = {
+                "status": "ok",
+                "count": len(normalized),
+                "options": len(option_conids),
+                "greeks_count": len(greeks),
+                "rows": normalized,
+                "greeks": greeks,
+            }
+        except (IBKRAuthError, IBKRError) as exc:
+            result["positions"]["status"] = "failed"
+            result["positions"]["error"] = str(exc)
+
+        try:
+            raw_acct = await self.portfolio_summary(account_id)
+            if isinstance(raw_acct, dict):
+                result["account"] = {
+                    "status": "ok",
+                    "summary": normalize_summary(raw_acct),
+                    "raw": raw_acct,
+                }
+            else:
+                result["account"]["status"] = "empty"
+        except (IBKRAuthError, IBKRError) as exc:
+            result["account"]["status"] = "failed"
+            result["account"]["error"] = str(exc)
+
+        try:
+            raw_trades = await self.trades()
+            if isinstance(raw_trades, list):
+                normalized_trades = [
+                    normalize_trade(t, account_id=account_id)
+                    for t in raw_trades
+                ]
+                result["trades"] = {
+                    "status": "ok",
+                    "count": len(normalized_trades),
+                    "rows": normalized_trades,
+                }
+            else:
+                result["trades"]["status"] = "empty"
+        except (IBKRAuthError, IBKRError) as exc:
+            result["trades"]["status"] = "failed"
+            result["trades"]["error"] = str(exc)
+
+        try:
+            from app.db.base import AsyncSessionLocal
+            from app.db.models import Setting
+            async with AsyncSessionLocal() as session:
+                settings_row = await session.get(Setting, 1)
+            tracked = []
+            if settings_row and settings_row.data:
+                for u in settings_row.data.get("underlyings", []):
+                    try:
+                        tracked.append((int(u["conid"]), u.get("symbol") or str(u["conid"])))
+                    except (KeyError, ValueError, TypeError):
+                        continue
+            if tracked:
+                conids = [t[0] for t in tracked]
+                snaps = await self.market_snapshot(conids, UNDERLYING_FIELD_CODES)
+                quotes = []
+                for row in snaps:
+                    q = parse_underlying_quote(row)
+                    q["conid"] = row.get("conid")
+                    q["symbol"] = next(
+                        (s for c, s in tracked if c == row.get("conid")), None
+                    )
+                    quotes.append(q)
+                result["market"] = {
+                    "status": "ok",
+                    "count": len(quotes),
+                    "rows": quotes,
+                }
+            else:
+                result["market"]["status"] = "empty"
+        except (IBKRAuthError, IBKRError) as exc:
+            result["market"]["status"] = "failed"
+            result["market"]["error"] = str(exc)
+
+        return result
+
     async def snapshot_with_warmup(
         self,
         conids: list[int],
