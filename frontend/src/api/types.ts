@@ -2,7 +2,8 @@ export type GatewayStatus =
   | "unknown"
   | "disconnected"
   | "authenticated"
-  | "polling";
+  | "pulling"
+  | "logging_in";
 
 export interface SessionState {
   status: GatewayStatus;
@@ -12,6 +13,10 @@ export interface SessionState {
   account_id: string | null;
   message: string;
   last_checked: string | null;
+  user_logged_in: boolean;
+  last_pull: string | null;
+  pull_source: string | null;
+  login_requested_at: string | null;
 }
 
 export interface Meta {
@@ -38,6 +43,16 @@ export interface Position {
   iv: number | null;
   greeks_source: string | null;
   snapshot_ts: string | null;
+  dte: number | null;
+  underlying_price: number | null;
+  premium_captured_pct: number | null;
+  cushion_pct: number | null;
+  intrinsic_value: number | null;
+  extrinsic_value: number | null;
+  status: string | null;
+  chain_id: string | null;
+  source: string | null;
+  last_updated: string | null;
 }
 
 export interface AccountSummary {
@@ -49,6 +64,8 @@ export interface AccountSummary {
   buying_power: number | null;
   cash: number | null;
   leverage: number | null;
+  source: string | null;
+  last_updated: string | null;
 }
 
 export interface Market {
@@ -63,6 +80,7 @@ export interface Market {
   rsi14: number | null;
   sma50: number | null;
   sma200: number | null;
+  source: string | null;
 }
 
 export interface SignalSubScores {
@@ -85,4 +103,79 @@ export interface Signal {
   composite_score: number | null;
   verdict: string | null;
   sub_scores: SignalSubScores | null;
+  source: string | null;
+}
+
+export interface PullResult {
+  status: string;
+  account_id?: string;
+  pull_ts?: string;
+  positions?: string;
+  account?: string;
+  trades?: string;
+  market?: string;
+  message?: string;
+}
+
+export interface Trade {
+  exec_id: string;
+  conid: number | null;
+  symbol: string | null;
+  sec_type: string | null;
+  side: string | null;
+  right: string | null;
+  strike: number | null;
+  expiry: string | null;
+  qty: number | null;
+  price: number | null;
+  commission: number | null;
+  exec_time: string | null;
+}
+
+export interface RiskPosition {
+  symbol: string | null;
+  sec_type: string | null;
+  right: string | null;
+  strike: number | null;
+  beta: number | null;
+  delta_dollars: number | null;
+  beta_weighted_delta_dollars: number | null;
+  scenario_pnl: number | null;
+}
+
+export interface Assignment {
+  total_obligation: number | null;
+  cash: number | null;
+  coverage_ratio: number | null;
+  short_put_count: number;
+}
+
+export interface EquityPoint {
+  ts: string | null;
+  net_liquidation: number | null;
+}
+
+export interface RollChain {
+  chain_id: string;
+  underlying_symbol: string | null;
+  right: string | null;
+  status: string | null;
+  opened_at: string | null;
+  closed_at: string | null;
+  cumulative_credit: number | null;
+  leg_count: number;
+  conids: number[];
+}
+
+export interface Risk {
+  scenario_move: number;
+  index_symbol: string | null;
+  net_liquidation: number | null;
+  beta_weighted_delta_dollars: number | null;
+  gross_delta_dollars: number | null;
+  scenario_pnl: number | null;
+  scenario_pnl_pct: number | null;
+  assignment: Assignment;
+  positions: RiskPosition[];
+  equity_curve: EquityPoint[];
 }

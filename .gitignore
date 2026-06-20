@@ -25,3 +25,9 @@ Thumbs.db
 
 # Docker / data
 pgdata/
+# IBEAM login debug screenshots (runtime artifacts)
+gateway/outputs/
+
+# Local scratch / tooling
+backend/test_db.py
+opencode.json

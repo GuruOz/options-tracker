@@ -6,8 +6,9 @@ import type { Meta } from "./api/types";
 import { HeaderBar } from "./components/HeaderBar";
 import { UnderlyingsPanel } from "./components/UnderlyingsPanel";
 import { SignalPanel } from "./components/SignalPanel";
+import { AlertsPanel } from "./components/AlertsPanel";
 import { PositionsPanel } from "./components/PositionsPanel";
-import { MarketPanel } from "./components/MarketPanel";
+import { RiskPanel } from "./components/RiskPanel";
 import { PanelGrid } from "./components/PanelGrid";
 
 export default function App() {
@@ -43,8 +44,9 @@ export default function App() {
       <div className="space-y-4">
         <UnderlyingsPanel />
         <SignalPanel />
+        <AlertsPanel />
         <PositionsPanel />
-        <MarketPanel />
+        <RiskPanel />
       </div>
 
       <h2 className="mb-3 mt-8 text-lg font-semibold text-slate-700 dark:text-slate-300">

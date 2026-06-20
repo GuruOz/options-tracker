@@ -11,6 +11,10 @@ const INITIAL: SessionState = {
   account_id: null,
   message: "Connecting…",
   last_checked: null,
+  user_logged_in: false,
+  last_pull: null,
+  pull_source: null,
+  login_requested_at: null,
 };
 
 function wsUrl(): string {
@@ -41,6 +45,20 @@ export function useSession(): SessionState {
           } else if (msg.type === "data" && msg.resource) {
             // A poll persisted new data — refetch the matching query.
             queryClient.invalidateQueries({ queryKey: [msg.resource] });
+            // Derived views are recomputed server-side from these resources.
+            if (msg.resource === "positions" || msg.resource === "market") {
+              queryClient.invalidateQueries({ queryKey: ["alerts"] });
+            }
+            if (msg.resource === "positions" || msg.resource === "trades") {
+              queryClient.invalidateQueries({ queryKey: ["chains"] });
+            }
+            if (
+              msg.resource === "positions" ||
+              msg.resource === "market" ||
+              msg.resource === "account"
+            ) {
+              queryClient.invalidateQueries({ queryKey: ["risk"] });
+            }
           }
         } catch {
           /* ignore malformed frames */

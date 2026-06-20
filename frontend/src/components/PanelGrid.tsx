@@ -1,7 +1,6 @@
 const PANELS: { title: string; blurb: string }[] = [
-  { title: "Needs attention today", blurb: "Ranked alerts: ITM puts, profit targets, expiries." },
-  { title: "Portfolio risk", blurb: "Beta-weighted −10% exposure, assignment coverage, equity curve." },
-  { title: "Premium income", blurb: "Realized P&L (commission-net), win rate, yield." },
+  { title: "Premium income", blurb: "Realized P&L (commission-net), win rate, yield, withdrawals." },
+  { title: "Flex / CSV import", blurb: "Backfill pre-first-run trade history into executions." },
 ];
 
 export function PanelGrid() {

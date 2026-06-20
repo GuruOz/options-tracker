@@ -11,9 +11,5 @@
 }
 
 body {
-  @apply bg-slate-50 text-slate-800 antialiased transition-colors duration-200;
-}
-
-body.dark {
-  @apply bg-slate-950 text-slate-100;
+  @apply bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 antialiased transition-colors duration-200;
 }
