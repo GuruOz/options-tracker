@@ -159,6 +159,7 @@ export interface RollChain {
   chain_id: string;
   underlying_symbol: string | null;
   right: string | null;
+  strike: number | null;
   status: string | null;
   opened_at: string | null;
   closed_at: string | null;

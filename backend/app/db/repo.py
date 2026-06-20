@@ -138,6 +138,16 @@ async def open_roll_chains(db: AsyncSession, account_id: str) -> dict[int, str]:
     return {row.conid: row.chain_id for row in rows}
 
 
+def _underlying_ticker(symbol: str | None) -> str | None:
+    """Strip an option/OCC symbol down to its underlying ticker.
+
+    'NVDA 260618P00216000' -> 'NVDA'; 'NVDA' -> 'NVDA'.
+    """
+    if not symbol:
+        return None
+    return symbol.strip().split()[0] or None
+
+
 async def roll_chain_summaries(
     db: AsyncSession, account_id: str, *, status: str = "open"
 ) -> list[dict]:
@@ -161,21 +171,41 @@ async def roll_chain_summaries(
 
     result = []
     for chain in chains:
+        # Pull each leg with its execution so we can derive a clean ticker +
+        # strike for display ("NVDA 216P") rather than the raw OCC symbol.
         legs = await db.execute(
-            select(RollChainLeg)
+            select(RollChainLeg, Execution)
+            .join(Execution, Execution.exec_id == RollChainLeg.exec_id, isouter=True)
             .where(RollChainLeg.chain_id == chain.chain_id)
             .order_by(RollChainLeg.created_at)
         )
-        leg_list = list(legs.scalars().all())
+        leg_rows = list(legs.all())
+
+        # Identify the trade by its opening leg: that's the strike/right the
+        # user sold and (typically) rolled at.
+        opening = next(
+            (e for leg, e in leg_rows if e is not None and (leg.role == "open")),
+            None,
+        )
+        if opening is None:
+            opening = next((e for _, e in leg_rows if e is not None), None)
+
+        underlying = _underlying_ticker(
+            (opening.symbol if opening else None) or chain.underlying_symbol
+        )
+        right = (opening.right if opening else None) or chain.right
+        strike = float(opening.strike) if opening and opening.strike is not None else None
+
         result.append({
             "chain_id": chain.chain_id,
-            "underlying_symbol": chain.underlying_symbol,
-            "right": chain.right,
+            "underlying_symbol": underlying,
+            "right": right,
+            "strike": strike,
             "status": chain.status,
             "opened_at": chain.opened_at.isoformat() if chain.opened_at else None,
             "closed_at": chain.closed_at.isoformat() if chain.closed_at else None,
             "cumulative_credit": float(chain.cumulative_credit) if chain.cumulative_credit is not None else None,
-            "leg_count": len(leg_list),
-            "conids": [l.conid for l in leg_list if l.conid is not None],
+            "leg_count": len(leg_rows),
+            "conids": [leg.conid for leg, _ in leg_rows if leg.conid is not None],
         })
     return result

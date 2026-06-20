@@ -8,6 +8,15 @@ const money = (v: number | null) =>
   v == null ? "—" : v.toLocaleString(undefined, { maximumFractionDigits: 0 });
 const percent = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 
+// "NVDA 216P" from the chain's underlying, strike and right. String(216) ->
+// "216" and String(217.5) -> "217.5", so no trailing-zero formatting needed.
+const chainLabel = (c: RollChain) => {
+  const sym = c.underlying_symbol ?? "—";
+  const strike = c.strike != null ? ` ${String(c.strike)}` : "";
+  const right = c.right ?? "";
+  return `${sym}${strike}${right}`;
+};
+
 function StatusPill({ status }: { status: string | null }) {
   if (!status) return <span className="text-slate-400">—</span>;
   let color = "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400";
@@ -243,9 +252,7 @@ export function PositionsPanel() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700">
-                    <th className="py-2 pr-3">Chain</th>
-                    <th className="pr-3">Symbol</th>
-                    <th className="pr-3">Right</th>
+                    <th className="py-2 pr-3">Symbol</th>
                     <th className="pr-3 text-right">Legs</th>
                     <th className="pr-3 text-right">Opened</th>
                     <th className="pr-3 text-right">Closed</th>
@@ -255,9 +262,7 @@ export function PositionsPanel() {
                 <tbody>
                   {closedList.map((c) => (
                     <tr key={c.chain_id} className="border-b border-slate-50 dark:border-slate-800/50 last:border-0">
-                      <td className="py-2 pr-3 font-mono text-[10px] text-slate-400">{c.chain_id}</td>
-                      <td className="pr-3 font-medium text-slate-700 dark:text-slate-300">{c.underlying_symbol ?? "—"}</td>
-                      <td className="pr-3 text-slate-500 dark:text-slate-400">{c.right ?? "—"}</td>
+                      <td className="py-2 pr-3 font-medium text-slate-700 dark:text-slate-300">{chainLabel(c)}</td>
                       <td className="pr-3 text-right tabular-nums dark:text-slate-300">{c.leg_count}</td>
                       <td className="pr-3 text-right text-xs text-slate-400">{c.opened_at ? new Date(c.opened_at).toLocaleDateString() : "—"}</td>
                       <td className="pr-3 text-right text-xs text-slate-400">{c.closed_at ? new Date(c.closed_at).toLocaleDateString() : "—"}</td>
