@@ -49,6 +49,10 @@ export function useSession(): SessionState {
             if (msg.resource === "positions" || msg.resource === "market") {
               queryClient.invalidateQueries({ queryKey: ["alerts"] });
             }
+            if (msg.resource === "market" || msg.resource === "signals") {
+              // Composite-score sparklines read the persisted history series.
+              queryClient.invalidateQueries({ queryKey: ["signal", "history"] });
+            }
             if (msg.resource === "positions" || msg.resource === "trades") {
               queryClient.invalidateQueries({ queryKey: ["chains"] });
               // Income is derived from roll chains -> refresh it too.

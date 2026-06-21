@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getJSON } from "../api/client";
-import type { Signal, SignalSubScores } from "../api/types";
+import type { Signal, SignalPoint, SignalSubScores } from "../api/types";
 
 const VERDICT: Record<string, { bar: string; pill: string }> = {
   FAVORABLE: { bar: "bg-emerald-500", pill: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300" },
@@ -17,6 +17,43 @@ const SUBS: { key: keyof SignalSubScores; label: string }[] = [
 
 const clamp = (v: number) => Math.max(0, Math.min(100, v));
 const round = (v: number | null) => (v == null ? "—" : Math.round(v).toString());
+
+/** Composite-score history (0–100) with FAVORABLE (66) / SELECTIVE (45) guides. */
+function ScoreHistory({ conid }: { conid: number }) {
+  const { data } = useQuery({
+    queryKey: ["signal", "history", conid],
+    queryFn: () => getJSON<SignalPoint[]>(`/api/signal/history?conid=${conid}`),
+    staleTime: 60_000,
+  });
+  const points = (data ?? [])
+    .map((p) => p.composite_score)
+    .filter((v): v is number => v != null);
+  if (points.length < 2) return null;
+
+  const w = 240;
+  const h = 40;
+  const pad = 2;
+  const x = (i: number) => pad + (i * (w - pad * 2)) / (points.length - 1);
+  const y = (v: number) => h - pad - (clamp(v) / 100) * (h - pad * 2);
+  const path = points
+    .map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(p).toFixed(1)}`)
+    .join(" ");
+  const last = points[points.length - 1];
+  const stroke = last >= 66 ? "#10b981" : last >= 45 ? "#f59e0b" : "#94a3b8";
+
+  return (
+    <div className="mt-3">
+      <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
+        Score history ({points.length})
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="h-10 w-full" preserveAspectRatio="none">
+        <line x1={pad} y1={y(66)} x2={w - pad} y2={y(66)} stroke="#10b981" strokeOpacity={0.25} strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+        <line x1={pad} y1={y(45)} x2={w - pad} y2={y(45)} stroke="#f59e0b" strokeOpacity={0.25} strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+        <path d={path} fill="none" stroke={stroke} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+      </svg>
+    </div>
+  );
+}
 
 export function SignalPanel() {
   const { data } = useQuery({
@@ -91,6 +128,8 @@ export function SignalPanel() {
                     );
                   })}
                 </dl>
+
+                <ScoreHistory conid={s.underlying_conid} />
               </div>
             );
           })}

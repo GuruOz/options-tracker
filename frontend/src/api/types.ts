@@ -106,6 +106,12 @@ export interface Signal {
   source: string | null;
 }
 
+export interface SignalPoint {
+  ts: string | null;
+  composite_score: number | null;
+  verdict: string | null;
+}
+
 export interface PullResult {
   status: string;
   account_id?: string;

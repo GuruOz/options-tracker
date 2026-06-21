@@ -49,7 +49,7 @@ Conventions for new work:
 - [ ] Compute/serve a theta-decay curve per option (extrinsic value vs. time to expiry) and render a mini-chart in the cockpit row/expander.
 
 ### 3. Signal history chart + backtest  _(spec signal section)_
-- [ ] Frontend time-series chart of composite score from `signal_history` (endpoint already exists).
+- [x] Frontend time-series chart of composite score from `signal_history` — per-underlying sparkline in `SignalPanel.tsx` (`ScoreHistory`), with FAVORABLE (66) / SELECTIVE (45) guide lines, fed by the existing `/api/signal/history` endpoint; `["signal","history"]` invalidated on market/signals pushes. (2026-06-21)
 - [ ] Simple backtest view replaying persisted scores against outcomes.
 
 ---
