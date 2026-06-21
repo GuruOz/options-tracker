@@ -4,6 +4,7 @@ from __future__ import annotations
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.rolls import _credit
 from app.db.models import (
     AccountSnapshot,
     Execution,
@@ -202,10 +203,26 @@ async def roll_chain_summaries(
             "right": right,
             "strike": strike,
             "status": chain.status,
+            "close_reason": chain.close_reason,
             "opened_at": chain.opened_at.isoformat() if chain.opened_at else None,
             "closed_at": chain.closed_at.isoformat() if chain.closed_at else None,
             "cumulative_credit": float(chain.cumulative_credit) if chain.cumulative_credit is not None else None,
             "leg_count": len(leg_rows),
             "conids": [leg.conid for leg, _ in leg_rows if leg.conid is not None],
+            "legs": [
+                {
+                    "leg_id": str(leg.id),
+                    "role": leg.role,
+                    "date": (
+                        e.exec_time.isoformat() if e and e.exec_time
+                        else (leg.created_at.isoformat() if leg.created_at else None)
+                    ),
+                    "action": (e.side if e else None),
+                    "strike": (float(e.strike) if e and e.strike is not None else None),
+                    "price": (float(e.price) if e and e.price is not None else 0.0),
+                    "credit": (_credit(e) if e else 0.0),
+                }
+                for leg, e in leg_rows
+            ],
         })
     return result

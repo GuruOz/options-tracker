@@ -155,17 +155,29 @@ export interface EquityPoint {
   net_liquidation: number | null;
 }
 
+export interface RollChainLeg {
+  leg_id: string;
+  role: string;
+  date: string | null;
+  action: string | null;
+  strike: number | null;
+  price: number;
+  credit: number;
+}
+
 export interface RollChain {
   chain_id: string;
   underlying_symbol: string | null;
   right: string | null;
   strike: number | null;
   status: string | null;
+  close_reason?: string | null;
   opened_at: string | null;
   closed_at: string | null;
   cumulative_credit: number | null;
   leg_count: number;
   conids: number[];
+  legs?: RollChainLeg[];
 }
 
 export interface Risk {

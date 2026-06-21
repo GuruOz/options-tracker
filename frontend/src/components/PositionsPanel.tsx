@@ -8,13 +8,22 @@ const money = (v: number | null) =>
   v == null ? "—" : v.toLocaleString(undefined, { maximumFractionDigits: 0 });
 const percent = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 
-// "NVDA 216P" from the chain's underlying, strike and right. String(216) ->
-// "216" and String(217.5) -> "217.5", so no trailing-zero formatting needed.
+// "NVDA 216P" from the chain's underlying, strike and right; "NVDA 216→210P"
+// when a chain spans strikes (a manually-linked cross-strike roll). String(216)
+// -> "216" and String(217.5) -> "217.5", so no trailing-zero formatting needed.
 const chainLabel = (c: RollChain) => {
   const sym = c.underlying_symbol ?? "—";
-  const strike = c.strike != null ? ` ${String(c.strike)}` : "";
   const right = c.right ?? "";
-  return `${sym}${strike}${right}`;
+
+  const openStrikes = (c.legs ?? [])
+    .filter((l) => l.role === "open" && l.strike != null)
+    .map((l) => l.strike as number);
+  const first = openStrikes.length ? openStrikes[0] : c.strike;
+  const last = openStrikes.length ? openStrikes[openStrikes.length - 1] : c.strike;
+
+  if (first == null) return right ? `${sym} ${right}` : sym;
+  const strikeText = last != null && last !== first ? `${first}→${last}` : `${first}`;
+  return `${sym} ${strikeText}${right}`;
 };
 
 function StatusPill({ status }: { status: string | null }) {
@@ -268,6 +277,11 @@ export function PositionsPanel() {
                       <td className="pr-3 text-right text-xs text-slate-400">{c.closed_at ? new Date(c.closed_at).toLocaleDateString() : "—"}</td>
                       <td className={`text-right tabular-nums font-semibold ${(c.cumulative_credit ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                         {money(c.cumulative_credit)}
+                        {c.close_reason && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded-sm bg-slate-200 dark:bg-slate-700 text-[9px] uppercase tracking-wide text-slate-600 dark:text-slate-300">
+                            {c.close_reason.replace("_", " ")}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -282,25 +296,78 @@ export function PositionsPanel() {
 }
 
 function ChainGroup({ chainId, chain, positions }: { chainId: string; chain: RollChain | undefined; positions: Position[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const queryClient = useQueryClient();
+
+  const handleClose = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Manually close this chain?")) return;
+    await fetch(`/api/chains/${chainId}/close`, { method: "POST" });
+    queryClient.invalidateQueries({ queryKey: ["positions"] });
+    queryClient.invalidateQueries({ queryKey: ["chains"] });
+    queryClient.invalidateQueries({ queryKey: ["chains", "closed"] });
+  };
+
   return (
     <>
-      <tr className="bg-slate-50 dark:bg-slate-800/50">
-        <td colSpan={15} className="py-1.5 px-0">
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-amber-600 dark:text-amber-400 font-semibold">🔗 Chain</span>
-            <span className="text-slate-500 dark:text-slate-400 font-mono text-[10px]">{chainId}</span>
-            {chain?.underlying_symbol && (
-              <span className="text-slate-600 dark:text-slate-300 font-medium">{chain.underlying_symbol}</span>
-            )}
-            {chain?.cumulative_credit != null && (
-              <span className={`font-semibold tabular-nums ${chain.cumulative_credit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                Cumulative {money(chain.cumulative_credit)}
-              </span>
-            )}
-            <span className="text-slate-400 dark:text-slate-500">{positions.length} leg{positions.length > 1 ? "s" : ""}</span>
+      <tr className="bg-slate-50 dark:bg-slate-800/50 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-t border-slate-200 dark:border-slate-700" onClick={() => setExpanded(!expanded)}>
+        <td colSpan={15} className="py-2 px-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 text-xs">
+              <span className={`transform transition-transform text-slate-400 ${expanded ? "rotate-90" : ""}`}>&#9654;</span>
+              <span className="text-amber-600 dark:text-amber-400 font-semibold">🔗 Chain</span>
+              {chain && (
+                <span className="text-slate-600 dark:text-slate-300 font-bold tracking-wide">{chainLabel(chain)}</span>
+              )}
+              {chain?.cumulative_credit != null && (
+                <span className={`font-semibold tabular-nums px-2 py-0.5 rounded-full ${chain.cumulative_credit >= 0 ? "bg-emerald-100/50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-red-100/50 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>
+                  {money(chain.cumulative_credit)} net
+                </span>
+              )}
+              <span className="text-slate-400 dark:text-slate-500">{chain?.legs?.length ?? positions.length} leg{(chain?.legs?.length ?? positions.length) !== 1 ? "s" : ""}</span>
+            </div>
+            <div>
+              <button onClick={handleClose} className="px-2 py-1 text-[10px] font-medium text-slate-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                Close chain
+              </button>
+            </div>
           </div>
         </td>
       </tr>
+      {expanded && chain?.legs && chain.legs.length > 0 && (
+        <tr className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
+          <td colSpan={15} className="p-0">
+            <div className="pl-8 py-2 pr-4 bg-slate-50/50 dark:bg-slate-800/20 shadow-inner">
+              <table className="w-full text-[11px] text-slate-500 dark:text-slate-400">
+                <thead>
+                  <tr className="text-left font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700">
+                    <th className="py-1 pr-2">Date</th>
+                    <th className="pr-2">Role</th>
+                    <th className="pr-2">Action</th>
+                    <th className="pr-2 text-right">Strike</th>
+                    <th className="pr-2 text-right">Price</th>
+                    <th className="text-right">Credit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {chain.legs.map(leg => (
+                    <tr key={leg.leg_id} className="border-b border-slate-100 dark:border-slate-800/50 last:border-0">
+                      <td className="py-1 pr-2 whitespace-nowrap">{leg.date ? new Date(leg.date).toLocaleString() : "—"}</td>
+                      <td className="pr-2 font-medium">{leg.role}</td>
+                      <td className="pr-2">{leg.action ?? "—"}</td>
+                      <td className="pr-2 text-right tabular-nums">{leg.strike ?? "—"}</td>
+                      <td className="pr-2 text-right tabular-nums">{leg.price.toFixed(2)}</td>
+                      <td className={`text-right tabular-nums font-medium ${leg.credit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                        {money(leg.credit)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      )}
       {positions.map((p) => (
         <PositionRow key={p.conid} p={p} />
       ))}

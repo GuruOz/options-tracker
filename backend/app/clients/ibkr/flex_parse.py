@@ -151,4 +151,43 @@ def parse_flex_xml(xml_text: str, account_id: str) -> list[dict[str, Any]]:
                 },
             })
 
+        # Also parse OptionEAE for expirations
+        for eae in stmt.iter(f"{ns}OptionEAE"):
+            ttype = _text(eae, "transactionType")
+            if not ttype or ttype.upper() != "EXPIRATION":
+                continue
+
+            symbol = _text(eae, "symbol")
+            qty = _float_val(eae, "quantity")
+            if not qty:
+                continue
+
+            exec_id = _text(eae, "transactionID")
+            if not exec_id:
+                date_val = _text(eae, "date") or ""
+                conid_val = _text(eae, "conid") or ""
+                exec_id = f"eae_exp_{conid_val}_{date_val}"
+
+            # If qty < 0 (short), we Buy to close. If qty > 0 (long), we Sell to close.
+            side = "B" if qty < 0 else "S"
+
+            trades.append({
+                "exec_id": exec_id,
+                "account_id": account_id,
+                "conid": _int_val(eae, "conid"),
+                "symbol": symbol[:64] if symbol else None,
+                "sec_type": "OPT",
+                "side": side,
+                "right": _right_from_put_call(_text(eae, "putCall")),
+                "strike": _float_val(eae, "strike"),
+                "expiry": _parse_expiry_date(_text(eae, "expiry") or _text(eae, "date")),
+                "qty": abs(qty),
+                "price": 0.0,
+                "commission": 0.0,
+                "realized_pnl": 0.0,
+                "exec_time": _parse_flex_time(_text(eae, "date")),
+                "source": "flex_eae",
+                "raw": {k: v for k, v in eae.attrib.items() if v is not None},
+            })
+
     return trades

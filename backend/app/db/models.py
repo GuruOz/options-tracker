@@ -190,7 +190,10 @@ class RollChain(Base):
     underlying_symbol: Mapped[str | None] = mapped_column(String(32))
     underlying_conid: Mapped[int | None] = mapped_column(BigInteger)
     right: Mapped[str | None] = mapped_column(String(1))
+    strike: Mapped[float | None] = mapped_column(Money)
     status: Mapped[str | None] = mapped_column(String(16))  # open/closed/assigned
+    close_reason: Mapped[str | None] = mapped_column(String(32))
+    is_manual: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cumulative_credit: Mapped[float | None] = mapped_column(Money)
@@ -208,13 +211,31 @@ class RollChainLeg(Base):
         String(64), ForeignKey("executions.exec_id")
     )
     conid: Mapped[int | None] = mapped_column(BigInteger)
-    role: Mapped[str | None] = mapped_column(String(16))  # open/close/roll/assignment
+    role: Mapped[str | None] = mapped_column(String(32))  # open/close/roll/assignment/expired/assignment_stock/stock_close
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     __table_args__ = (
         UniqueConstraint("chain_id", "exec_id", name="uq_chain_exec"),
+    )
+
+
+class ChainAdjustment(Base):
+    """User overrides for the roll chain builder."""
+
+    __tablename__ = "chain_adjustments"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    chain_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("roll_chains.chain_id"), index=True
+    )
+    adjustment_type: Mapped[str] = mapped_column(String(32))  # manual_link, manual_close, manual_split
+    exec_id: Mapped[str | None] = mapped_column(String(64))  # For link/split
+    close_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True)) # For close
+    close_reason: Mapped[str | None] = mapped_column(String(32)) # For close
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

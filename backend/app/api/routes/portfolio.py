@@ -101,6 +101,54 @@ async def get_chains(status: str = "open", db: AsyncSession = Depends(get_sessio
     return await repo.roll_chain_summaries(db, session_state.account_id, status=status)
 
 
+from pydantic import BaseModel
+class LinkExecRequest(BaseModel):
+    exec_id: str
+
+
+async def _rebuild_chains() -> None:
+    """Re-run the chain builder so a just-saved adjustment takes effect now."""
+    from app.poller.jobs.rolls import build_rolls
+    await build_rolls(None)
+
+
+@router.post("/chains/{chain_id}/link")
+async def link_chain_exec(chain_id: str, req: LinkExecRequest, db: AsyncSession = Depends(get_session)):
+    """Merge the chain that owns `exec_id` into this chain (cross-strike roll)."""
+    if not session_state.account_id:
+        return {"error": "Not logged in"}
+
+    from app.db.models import ChainAdjustment
+    db.add(ChainAdjustment(
+        chain_id=chain_id,
+        adjustment_type="manual_link",
+        exec_id=req.exec_id,
+    ))
+    await db.commit()
+    await _rebuild_chains()
+    return {"status": "ok"}
+
+
+@router.post("/chains/{chain_id}/close")
+async def close_chain_manual(chain_id: str, db: AsyncSession = Depends(get_session)):
+    """Manually close a chain (e.g. an early close the trade feed can't show)."""
+    if not session_state.account_id:
+        return {"error": "Not logged in"}
+
+    from datetime import datetime, timezone
+    from app.db.models import ChainAdjustment
+    db.add(ChainAdjustment(
+        chain_id=chain_id,
+        adjustment_type="manual_close",
+        close_date=datetime.now(timezone.utc),
+        close_reason="manual_close",
+    ))
+    await db.commit()
+    await _rebuild_chains()
+    return {"status": "ok"}
+
+
+
 _COLUMNS_TRADES = {
     "exec_id", "account_id", "conid", "symbol", "sec_type", "side", "right",
     "strike", "expiry", "qty", "price", "commission", "realized_pnl",
