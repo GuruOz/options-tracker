@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     contracts,
     health,
+    income,
     market,
     portfolio,
     risk,
@@ -19,3 +20,4 @@ api_router.include_router(contracts.router)
 api_router.include_router(portfolio.router)
 api_router.include_router(market.router)
 api_router.include_router(risk.router)
+api_router.include_router(income.router)

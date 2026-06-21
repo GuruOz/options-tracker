@@ -254,6 +254,33 @@ class OptionMeta(Base):
     )
 
 
+class IncomeAdjustment(Base):
+    """Per-month manual overlay for the premium-income panel.
+
+    One row per (account, month). Holds the user's "cashed out?" flag, an
+    optional withdrawal amount, and a free note — the only user-entered data in
+    the app. Monthly/yearly P&L itself is derived from roll chains, not stored.
+    """
+
+    __tablename__ = "income_adjustments"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("accounts.account_id"), index=True
+    )
+    month: Mapped[date] = mapped_column(Date)  # first day of the month
+    cashed_out: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    withdrawal_amount: Mapped[float | None] = mapped_column(Money)
+    note: Mapped[str | None] = mapped_column(String(256))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "month", name="uq_income_account_month"),
+    )
+
+
 class Setting(Base):
     """Single-row JSON blob of user-configurable settings (id is always 1)."""
 

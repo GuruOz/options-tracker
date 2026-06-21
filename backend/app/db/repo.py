@@ -124,6 +124,26 @@ async def signal_series(
     return out
 
 
+async def all_roll_chains(db: AsyncSession, account_id: str) -> list:
+    """Every roll chain for an account (for income aggregation)."""
+    from app.db.models import RollChain
+    rows = await db.execute(
+        select(RollChain).where(RollChain.account_id == account_id)
+    )
+    return list(rows.scalars().all())
+
+
+async def income_adjustments(db: AsyncSession, account_id: str) -> list:
+    """The per-month manual income overlay rows for an account."""
+    from app.db.models import IncomeAdjustment
+    rows = await db.execute(
+        select(IncomeAdjustment)
+        .where(IncomeAdjustment.account_id == account_id)
+        .order_by(IncomeAdjustment.month)
+    )
+    return list(rows.scalars().all())
+
+
 async def open_roll_chains(db: AsyncSession, account_id: str) -> dict[int, str]:
     """Returns a dict mapping conid -> chain_id for all open roll chains."""
     from app.db.models import RollChain, RollChainLeg

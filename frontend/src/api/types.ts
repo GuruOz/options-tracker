@@ -192,3 +192,32 @@ export interface Risk {
   positions: RiskPosition[];
   equity_curve: EquityPoint[];
 }
+
+export interface IncomeMonth {
+  month: string; // "YYYY-MM"
+  pnl: number;
+  chain_count: number;
+  cashed_out: boolean;
+  withdrawal: number | null;
+  note: string | null;
+}
+
+export interface IncomeYear {
+  year: number;
+  ytd: number;
+  withdrawn: number;
+  remaining: number;
+}
+
+export interface Income {
+  months: IncomeMonth[];
+  years: IncomeYear[];
+  all_time: number;
+  realized: number;
+  unrealized: number;
+  win_rate: number | null;
+  closed_count: number;
+  open_count: number;
+  net_liquidation: number | null;
+  yield_pct: number | null;
+}

@@ -38,11 +38,12 @@ Conventions for new work:
 
 ## Pending — features
 
-### 1. Premium income panel  _(spec panel 5, build step 8)_
-- [ ] Backend `/api/income`: commission-net realized P&L from `executions` — month / YTD / all-time + monthly bar series, win rate, yield.
-- [ ] Withdrawal / "cashed-out" / remaining-profit tracking (manual entries per month) — needs a new table + write endpoints (this is the one place the app accepts user input).
-- [ ] `IncomePanel.tsx` replicating the Excel monthly → YTD layout (see spec "Excel tracker replication").
-- [ ] Net **all** premium figures of commissions (spec calls out the prototype ignored these).
+### 1. Premium income panel  _(spec panel 5, build step 8)_ — ✅ done 2026-06-21
+- [x] Backend `/api/income`: commission-net P&L aggregated from roll chains — month / YTD per year / all-time + monthly bar series, realized vs unrealized split, win rate, yield (`analytics/income.py`, `routes/income.py`). Attribution is by the chain's *open* month (matches the Excel tabs).
+- [x] Withdrawal / "cashed-out" / remaining-profit tracking — `income_adjustments` table (migration `0006`) + `PUT /api/income/adjustments` upsert (one row per account+month; the only user-entered data in the app).
+- [x] `IncomePanel.tsx` replicating the Excel monthly → YTD layout: stat cards, monthly bar chart, per-year YTD/withdrawn/remaining cards, and an editable monthly table (cashed-out checkbox, withdrawal, note). Wired in `App.tsx`; `["income"]` invalidated on positions/trades pushes.
+- [x] Net **all** premium figures of commissions — chain `cumulative_credit` is already commission-net, so the income rollup inherits it.
+- [ ] Follow-up: P&L is shown in **dollars** (commission-net, ×100). The user's Excel tracked **points** (per-share premium). Confirm dollars is the desired unit, or add a points toggle.
 
 ### 2. Per-position decay curve  _(spec panel 2)_
 - [ ] Compute/serve a theta-decay curve per option (extrinsic value vs. time to expiry) and render a mini-chart in the cockpit row/expander.

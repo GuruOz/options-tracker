@@ -51,6 +51,8 @@ export function useSession(): SessionState {
             }
             if (msg.resource === "positions" || msg.resource === "trades") {
               queryClient.invalidateQueries({ queryKey: ["chains"] });
+              // Income is derived from roll chains -> refresh it too.
+              queryClient.invalidateQueries({ queryKey: ["income"] });
             }
             if (
               msg.resource === "positions" ||

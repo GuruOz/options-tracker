@@ -9,6 +9,7 @@ import { SignalPanel } from "./components/SignalPanel";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { PositionsPanel } from "./components/PositionsPanel";
 import { RiskPanel } from "./components/RiskPanel";
+import { IncomePanel } from "./components/IncomePanel";
 import { PanelGrid } from "./components/PanelGrid";
 
 export default function App() {
@@ -47,6 +48,7 @@ export default function App() {
         <AlertsPanel />
         <PositionsPanel />
         <RiskPanel />
+        <IncomePanel />
       </div>
 
       <h2 className="mb-3 mt-8 text-lg font-semibold text-slate-700 dark:text-slate-300">
