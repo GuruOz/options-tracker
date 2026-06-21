@@ -127,6 +127,13 @@ def parse_flex_xml(xml_text: str, account_id: str) -> list[dict[str, Any]]:
             put_call = _right_from_put_call(_text(trade, "putCall"))
             sec_type = asset
 
+            # IBKR flex reports `quantity` SIGNED (negative for sells). The rest
+            # of the app (csv import, poll, OptionEAE below) stores the unsigned
+            # magnitude and lets the `side` column carry direction — so store the
+            # magnitude here too, otherwise a flex SELL gets qty<0 AND side="S",
+            # double-negating its credit and inverting the chain position.
+            qty_raw = _float_val(trade, "quantity")
+
             trades.append({
                 "exec_id": exec_id,
                 "account_id": account_id,
@@ -137,7 +144,7 @@ def parse_flex_xml(xml_text: str, account_id: str) -> list[dict[str, Any]]:
                 "right": put_call if sec_type in ("OPT", "FOP", "FUT") else None,
                 "strike": _float_val(trade, "strike"),
                 "expiry": _parse_expiry_date(_text(trade, "expiry")),
-                "qty": _float_val(trade, "quantity"),
+                "qty": abs(qty_raw) if qty_raw is not None else None,
                 "price": _float_val(trade, "tradePrice"),
                 "commission": _float_val(trade, "ibCommission"),
                 "realized_pnl": _float_val(trade, "fifoPnlRealized"),

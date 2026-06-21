@@ -91,6 +91,22 @@ async def all_option_trades(
     return list(rows.scalars().all())
 
 
+async def all_executions(
+    db: AsyncSession, account_id: str
+) -> list[Execution]:
+    """Every execution (all sec-types incl. STK), chronologically.
+
+    Used by the diagnostics dump — assignments arrive as STK fills, so the
+    options-only view can't reconcile a wheel against the Excel tracker.
+    """
+    rows = await db.execute(
+        select(Execution)
+        .where(Execution.account_id == account_id)
+        .order_by(Execution.exec_time)
+    )
+    return list(rows.scalars().all())
+
+
 async def latest_market(db: AsyncSession) -> list[MarketSnapshot]:
     """Most recent market snapshot per underlying (Postgres DISTINCT ON)."""
     rows = await db.execute(
