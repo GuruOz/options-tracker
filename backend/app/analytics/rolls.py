@@ -46,10 +46,16 @@ def _underlying_ticker(symbol: str | None) -> str | None:
 
 
 def _credit(exec_obj: Execution) -> float:
-    """Dollar credit (+) / debit (−) of a single execution, net of commission."""
-    qty = float(exec_obj.qty or 0)
+    """Dollar credit (+) / debit (−) of a single execution, net of commission.
+
+    `qty` is unsigned by convention (direction comes from `side`); abs() guards
+    against any feed that slips through signed. `commission` is always a cost, so
+    we subtract its magnitude regardless of the feed's sign — IBKR reports
+    `ibCommission`/`Comm/Fee` as NEGATIVE, so a naive `- comm` would *add* it.
+    """
+    qty = abs(float(exec_obj.qty or 0))
     price = float(exec_obj.price or 0)
-    comm = float(exec_obj.commission or 0)
+    comm = abs(float(exec_obj.commission or 0))
     mult = 100.0 if _is_option(exec_obj.sec_type) else 1.0
     gross = qty * price * mult
     if (exec_obj.side or "").upper() == "S":

@@ -37,6 +37,7 @@ function StatusPill({ status }: { status: string | null }) {
 
 export function PositionsPanel() {
   const [showClosed, setShowClosed] = useState(false);
+  const [showTrades, setShowTrades] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
   const queryClient = useQueryClient();
 
@@ -148,15 +149,73 @@ export function PositionsPanel() {
         </table>
       )}
 
+      {/* Closed chains (historical) */}
+      <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
+        <button
+          onClick={() => setShowClosed(!showClosed)}
+          className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
+        >
+          <span className={`transform transition-transform ${showClosed ? "rotate-90" : ""}`}>&#9654;</span>
+          Closed chains
+          <span className="text-xs font-normal text-slate-400">
+            ({showClosed ? closedList.length : "..."})
+          </span>
+        </button>
+        {showClosed && (
+          <div className="mt-3">
+            {closedLoading ? (
+              <p className="text-xs text-slate-400">Loading...</p>
+            ) : closedList.length === 0 ? (
+              <p className="text-xs text-slate-400">No closed chains yet.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700">
+                    <th className="py-2 pr-3">Symbol</th>
+                    <th className="pr-3 text-right">Legs</th>
+                    <th className="pr-3 text-right">Opened</th>
+                    <th className="pr-3 text-right">Closed</th>
+                    <th className="text-right">Cumulative credit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {closedList.map((c) => (
+                    <tr key={c.chain_id} className="border-b border-slate-50 dark:border-slate-800/50 last:border-0">
+                      <td className="py-2 pr-3 font-medium text-slate-700 dark:text-slate-300">{chainLabel(c)}</td>
+                      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{c.leg_count}</td>
+                      <td className="pr-3 text-right text-xs text-slate-400">{c.opened_at ? new Date(c.opened_at).toLocaleDateString() : "—"}</td>
+                      <td className="pr-3 text-right text-xs text-slate-400">{c.closed_at ? new Date(c.closed_at).toLocaleDateString() : "—"}</td>
+                      <td className={`text-right tabular-nums font-semibold ${(c.cumulative_credit ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                        {money(c.cumulative_credit)}
+                        {c.close_reason && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded-sm bg-slate-200 dark:bg-slate-700 text-[9px] uppercase tracking-wide text-slate-600 dark:text-slate-300">
+                            {c.close_reason.replace("_", " ")}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Option trades (all historical) */}
       <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
-        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
-          Option trades{" "}
+        <button
+          onClick={() => setShowTrades(!showTrades)}
+          className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
+        >
+          <span className={`transform transition-transform ${showTrades ? "rotate-90" : ""}`}>&#9654;</span>
+          Option trades
           <span className="text-xs font-normal text-slate-400">
             ({(optionTrades ?? []).length} total)
           </span>
-        </h3>
-
+        </button>
+        {showTrades && (
+        <div className="mt-3">
         <div className="mb-3 flex items-center gap-3">
           <label className="cursor-pointer rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50">
             Import CSV
@@ -237,58 +296,7 @@ export function PositionsPanel() {
             </table>
           </div>
         )}
-      </div>
-
-      {/* Closed chains (historical) */}
-      <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
-        <button
-          onClick={() => setShowClosed(!showClosed)}
-          className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
-        >
-          <span className={`transform transition-transform ${showClosed ? "rotate-90" : ""}`}>&#9654;</span>
-          Closed chains
-          <span className="text-xs font-normal text-slate-400">
-            ({showClosed ? closedList.length : "..."})
-          </span>
-        </button>
-        {showClosed && (
-          <div className="mt-3">
-            {closedLoading ? (
-              <p className="text-xs text-slate-400">Loading...</p>
-            ) : closedList.length === 0 ? (
-              <p className="text-xs text-slate-400">No closed chains yet.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700">
-                    <th className="py-2 pr-3">Symbol</th>
-                    <th className="pr-3 text-right">Legs</th>
-                    <th className="pr-3 text-right">Opened</th>
-                    <th className="pr-3 text-right">Closed</th>
-                    <th className="text-right">Cumulative credit</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {closedList.map((c) => (
-                    <tr key={c.chain_id} className="border-b border-slate-50 dark:border-slate-800/50 last:border-0">
-                      <td className="py-2 pr-3 font-medium text-slate-700 dark:text-slate-300">{chainLabel(c)}</td>
-                      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{c.leg_count}</td>
-                      <td className="pr-3 text-right text-xs text-slate-400">{c.opened_at ? new Date(c.opened_at).toLocaleDateString() : "—"}</td>
-                      <td className="pr-3 text-right text-xs text-slate-400">{c.closed_at ? new Date(c.closed_at).toLocaleDateString() : "—"}</td>
-                      <td className={`text-right tabular-nums font-semibold ${(c.cumulative_credit ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                        {money(c.cumulative_credit)}
-                        {c.close_reason && (
-                          <span className="ml-2 px-1.5 py-0.5 rounded-sm bg-slate-200 dark:bg-slate-700 text-[9px] uppercase tracking-wide text-slate-600 dark:text-slate-300">
-                            {c.close_reason.replace("_", " ")}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+        </div>
         )}
       </div>
     </section>
