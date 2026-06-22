@@ -78,7 +78,7 @@ def build_roll_chains(
     `_apply_adjustments`).
     """
     exs = [e for e in executions if e.exec_time is not None]
-    exs.sort(key=lambda e: e.exec_time)
+    exs.sort(key=lambda e: (e.exec_time, 0 if _is_option(e.sec_type) else 1))
 
     chains: list[dict] = []
     legs: list[dict] = []
@@ -170,8 +170,14 @@ def build_roll_chains(
                 # A buy from the flex OptionEAE feed is a worthless expiry, not a
                 # discretionary buy-to-close — label it accordingly.
                 is_expiry = (e.source or "") == "flex_eae"
-                role = "expired" if is_expiry else "close"
-                reason = "expired" if is_expiry else "bought_back"
+                is_assignment = bool(e.raw) and (e.raw.get("notes") == "A" or e.raw.get("code") == "A")
+
+                if is_assignment:
+                    role = "assignment"
+                    reason = "assigned"
+                else:
+                    role = "expired" if is_expiry else "close"
+                    reason = "expired" if is_expiry else "bought_back"
 
                 if chain is not None:
                     legs.append({
@@ -221,7 +227,7 @@ def build_roll_chains(
             is_assignment = bool(e.raw) and (
                 e.raw.get("notes") == "A" or e.raw.get("code") == "A"
             )
-            qty = float(e.qty or 0)
+            qty = abs(float(e.qty or 0))
             price = float(e.price or 0)
             underlying = _underlying_ticker(symbol) or symbol
 
@@ -230,16 +236,17 @@ def build_roll_chains(
                 right = "P" if side == "B" else "C"
                 key = (underlying, right, price)
                 chain = active_chains.get(key)
-                if chain and chain["_opt_pos"] < -1e-6:
-                    # Close the option leg…
-                    legs.append({
-                        "chain_id": chain["chain_id"],
-                        "exec_id": None,
-                        "conid": chain["_last_conid"],
-                        "role": "assignment",
-                        "created_at": e.exec_time,
-                    })
-                    chain["_opt_pos"] = 0
+                if chain:
+                    if chain["_opt_pos"] < -1e-6:
+                        # Close the option leg…
+                        legs.append({
+                            "chain_id": chain["chain_id"],
+                            "exec_id": None,
+                            "conid": chain["_last_conid"],
+                            "role": "assignment",
+                            "created_at": e.exec_time,
+                        })
+                        chain["_opt_pos"] = 0
                     # …and record the resulting stock leg.
                     legs.append({
                         "chain_id": chain["chain_id"],
@@ -250,6 +257,9 @@ def build_roll_chains(
                     })
                     chain["cumulative_credit"] += _credit(e)
                     chain["_stk_pos"] += qty if side == "B" else -qty
+                    chain["status"] = "open"
+                    chain["closed_at"] = None
+                    chain["close_reason"] = None
             else:
                 stk_qty_signed = qty if side == "B" else -qty
                 for chain in active_chains.values():

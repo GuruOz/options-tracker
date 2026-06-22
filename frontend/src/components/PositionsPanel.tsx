@@ -305,12 +305,32 @@ export function PositionsPanel() {
 
 function ChainGroup({ chainId, chain, positions }: { chainId: string; chain: RollChain | undefined; positions: Position[] }) {
   const [expanded, setExpanded] = useState(false);
+  const [linking, setLinking] = useState(false);
   const queryClient = useQueryClient();
+
+  const { data: allChains } = useQuery({
+    queryKey: ["chains", "all"],
+    queryFn: () => getJSON<RollChain[]>("/api/chains?status=all"),
+    enabled: linking,
+  });
 
   const handleClose = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm("Manually close this chain?")) return;
     await fetch(`/api/chains/${chainId}/close`, { method: "POST" });
+    queryClient.invalidateQueries({ queryKey: ["positions"] });
+    queryClient.invalidateQueries({ queryKey: ["chains"] });
+    queryClient.invalidateQueries({ queryKey: ["chains", "closed"] });
+  };
+
+  const handleLink = async (execId: string) => {
+    if (!execId) return;
+    await fetch(`/api/chains/${chainId}/link`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exec_id: execId }),
+    });
+    setLinking(false);
     queryClient.invalidateQueries({ queryKey: ["positions"] });
     queryClient.invalidateQueries({ queryKey: ["chains"] });
     queryClient.invalidateQueries({ queryKey: ["chains", "closed"] });
@@ -334,10 +354,42 @@ function ChainGroup({ chainId, chain, positions }: { chainId: string; chain: Rol
               )}
               <span className="text-slate-400 dark:text-slate-500">{chain?.legs?.length ?? positions.length} leg{(chain?.legs?.length ?? positions.length) !== 1 ? "s" : ""}</span>
             </div>
-            <div>
-              <button onClick={handleClose} className="px-2 py-1 text-[10px] font-medium text-slate-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                Close chain
-              </button>
+            <div onClick={(e) => e.stopPropagation()}>
+              {linking ? (
+                <div className="flex items-center gap-2">
+                  <select
+                    className="text-[10px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded p-1 text-slate-700 dark:text-slate-300"
+                    onChange={(e) => handleLink(e.target.value)}
+                    defaultValue=""
+                  >
+                    <option value="" disabled>Select chain to merge...</option>
+                    {(allChains ?? [])
+                      .filter(c => c.chain_id !== chainId && c.underlying_symbol === chain?.underlying_symbol)
+                      .map(c => {
+                        const firstLeg = c.legs?.find(l => l.exec_id != null);
+                        if (!firstLeg?.exec_id) return null;
+                        const dateStr = c.opened_at ? new Date(c.opened_at).toLocaleDateString() : "";
+                        return (
+                          <option key={c.chain_id} value={firstLeg.exec_id}>
+                            {chainLabel(c)} ({c.status}) {dateStr}
+                          </option>
+                        );
+                      })}
+                  </select>
+                  <button onClick={() => setLinking(false)} className="px-2 py-1 text-[10px] font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setLinking(true)} className="px-2 py-1 text-[10px] font-medium text-slate-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                    Link cross-strike
+                  </button>
+                  <button onClick={handleClose} className="px-2 py-1 text-[10px] font-medium text-slate-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                    Close chain
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </td>
@@ -358,10 +410,20 @@ function ChainGroup({ chainId, chain, positions }: { chainId: string; chain: Rol
                   </tr>
                 </thead>
                 <tbody>
-                  {chain.legs.map(leg => (
+                  {chain.legs.map(leg => {
+                    const roleLabels: Record<string, string> = {
+                      open: "Opened",
+                      close: "Closed",
+                      roll: "Rolled",
+                      assignment: "Assigned (Opt)",
+                      assignment_stock: "Stock Assigned",
+                      stock_close: "Stock Sold",
+                      expired: "Expired Worthless",
+                    };
+                    return (
                     <tr key={leg.leg_id} className="border-b border-slate-100 dark:border-slate-800/50 last:border-0">
                       <td className="py-1 pr-2 whitespace-nowrap">{leg.date ? new Date(leg.date).toLocaleString() : "—"}</td>
-                      <td className="pr-2 font-medium">{leg.role}</td>
+                      <td className="pr-2 font-medium">{roleLabels[leg.role] ?? leg.role}</td>
                       <td className="pr-2">{leg.action ?? "—"}</td>
                       <td className="pr-2 text-right tabular-nums">{leg.strike ?? "—"}</td>
                       <td className="pr-2 text-right tabular-nums">{leg.price.toFixed(2)}</td>
@@ -369,7 +431,8 @@ function ChainGroup({ chainId, chain, positions }: { chainId: string; chain: Rol
                         {money(leg.credit)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -163,6 +163,7 @@ export interface EquityPoint {
 
 export interface RollChainLeg {
   leg_id: string;
+  exec_id: string | null;
   role: string;
   date: string | null;
   action: string | null;

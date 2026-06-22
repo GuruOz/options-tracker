@@ -41,6 +41,9 @@ Conventions for new work:
 
 All cleared 2026-06-21. Unit target decided with the user: **keep dollars, commission-net**; the webapp *reconciles* to the Excel (points×100 − commissions), it does not display points.
 
+- [x] **P&L Stock Assignment accounting** — fixed 2026-06-21. Modified `_credit()` to correctly return dollar P&L for STK legs, fixing the issue where P&L was skewed by omitting stock assignment costs and stock sale revenue.
+- [x] **Expandable Roll Chain UI stock labels** — fixed 2026-06-21. UI now maps STK leg roles to human readable strings like "Stock Assigned" and "Stock Sold", and map loop syntax error resolved.
+- [x] **IBKR 500 API Gateway errors** — fixed 2026-06-21. Re-mapped `httpx` and `IBKRServerError` retries so transient 500 API errors from `iserver` are retried instead of bombing the poller.
 - [x] **Closed chains placement + collapsible option trades** — done 2026-06-21. Moved the **Closed chains** section *above* **Option trades** in `PositionsPanel.tsx`; Option-trades now uses the same collapsible disclosure (default collapsed, ▶ caret + count). `tsc` clean.
 - [x] **Cumulative credit sign** — fixed 2026-06-21. Confirmed root cause: `flex_parse.py` stored the quantity *signed* while `csv_import`/`normalize`(poll)/`OptionEAE` all store the unsigned magnitude, and both `_credit()` and the `_opt_pos` position tracking in `rolls.py` assume unsigned (direction from `side`). A flex SELL got `qty<0` AND `side="S"` → credit flipped. Fix: `abs()` the quantity in `flex_parse.py` (the lone offender).
 - [x] **Verify cumulative-credit calculation** — done 2026-06-21. Found a *second* bug: `_credit()` did `gross - comm` / `-(gross + comm)` treating commission as a positive magnitude, but IBKR reports `ibCommission`/`Comm/Fee` **negative** → commissions were being *added*. Now `abs(comm)` (and `abs(qty)` defensively). Added `backend/tests/test_excel_reconciliation.py`: Aug 2025 (QQQM 350 + QQQ 917 = 1267) and Feb 2026 (3153) chains transcribed from the Excel reproduce the sheet totals exactly (×100, zero commission).
@@ -68,8 +71,8 @@ All cleared 2026-06-21. Unit target decided with the user: **keep dollars, commi
 ## Pending — polish / follow-ups
 
 - [x] **Roll-chain edge cases**: Partial closes now handled — the builder tracks the running option position (`_opt_pos`), so buying back 1 of 2 contracts leaves the chain open until it's flat. (2026-06-21)
-- [ ] **Manual cross-strike roll UI**: the `/chains/{id}/link` endpoint works (merges a chain into another by `exec_id`), but there's no UI yet to pick the execution to link. Only the "Close chain" button is wired.
-- [ ] **Verify flex `OptionEAE` quantity sign**: builder treats `OptionEAE` qty `< 0` as a buy-to-close (short expiry). Confirm against a real statement that IBKR reports the signed short position there.
+- [x] **Manual cross-strike roll UI**: the `/chains/{id}/link` endpoint works (merges a chain into another by `exec_id`), and is now wired to the frontend via a "Link cross-strike" button in the ChainGroup that allows picking a leg from another chain on the same underlying.
+- [x] **Verify flex `OptionEAE` quantity sign**: Confirmed that IBKR reports a negative quantity (`qty < 0`) for short positions in the Flex Query `OptionEAE` section. The builder's assumption (`qty < 0` = buy-to-close) is correct.
 - [ ] **Break-even cushion option** — optionally measure cushion to break-even (`strike − premium`) instead of (or alongside) the strike. (User decision pending.)
 - [ ] **VIX / market-context chart** — spec panel 6 wants a 6–12 month price chart with 50-day overlay + VIX. `echarts` and `lightweight-charts` are already in `package.json` but unused.
 - [ ] **Assignment coverage basis** — currently `cash / obligation`; revisit whether `available_funds` or margin should factor in.
@@ -78,10 +81,10 @@ All cleared 2026-06-21. Unit target decided with the user: **keep dollars, commi
 
 ## Pending — code cleanup
 
-- [ ] Remove unused `flex_request()`, `flex_status()`, `flex_download()` from `client.py` if they weren't already removed (check current state).
-- [ ] Remove `SessionBanner.tsx` — dead component, replaced by HeaderBar.
-- [ ] Remove `AccountPanel.tsx` — dead component, replaced by HeaderBar stats.
-- [ ] Remove `MarketPanel.tsx` — dead component, removed from App.tsx but file still exists.
+- [x] Remove unused `flex_request()`, `flex_status()`, `flex_download()` from `client.py` if they weren't already removed (check current state).
+- [x] Remove `SessionBanner.tsx` — dead component, replaced by HeaderBar.
+- [x] Remove `AccountPanel.tsx` — dead component, replaced by HeaderBar stats.
+- [x] Remove `MarketPanel.tsx` — dead component, removed from App.tsx but file still exists.
 
 ---
 
