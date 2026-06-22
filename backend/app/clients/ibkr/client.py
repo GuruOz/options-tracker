@@ -49,7 +49,11 @@ class IBKRAuthError(IBKRError):
     """Gateway reachable but the session is not authenticated (401)."""
 
 
-_RETRYABLE = retry_if_exception_type((httpx.TransportError,))
+class IBKRServerError(IBKRError):
+    """Gateway returned a 5xx error."""
+
+
+_RETRYABLE = retry_if_exception_type((httpx.TransportError, IBKRServerError))
 
 
 class IBKRClient:
@@ -83,7 +87,7 @@ class IBKRClient:
         if resp.status_code == 404 and "access denied" in resp.text.lower():
             raise IBKRAuthError(f"not authenticated ({path}: access denied)")
         if resp.status_code >= 500:
-            raise IBKRError(f"{resp.status_code} from {path}")
+            raise IBKRServerError(f"{resp.status_code} from {path}")
         if resp.status_code >= 400:
             raise IBKRError(f"{resp.status_code} from {path}: {resp.text[:200]}")
         if not resp.content:

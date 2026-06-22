@@ -10,6 +10,11 @@ class _ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DecayPoint(BaseModel):
+    dte: int
+    extrinsic: float
+
+
 class PositionOut(_ORM):
     conid: int
     symbol: str | None = None
@@ -35,6 +40,7 @@ class PositionOut(_ORM):
     cushion_pct: float | None = None
     intrinsic_value: float | None = None
     extrinsic_value: float | None = None
+    decay_curve: list[DecayPoint] | None = None
     status: str | None = None
     chain_id: str | None = None
     source: str | None = None

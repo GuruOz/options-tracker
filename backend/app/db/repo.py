@@ -248,6 +248,7 @@ async def roll_chain_summaries(
             "legs": [
                 {
                     "leg_id": str(leg.id),
+                    "exec_id": leg.exec_id,
                     "role": leg.role,
                     "date": (
                         e.exec_time.isoformat() if e and e.exec_time

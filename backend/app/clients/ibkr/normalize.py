@@ -167,6 +167,7 @@ def normalize_trade(raw: dict, account_id: str | None = None) -> dict:
     """Map a /iserver/account/trades row to Execution columns."""
     asset_class = raw.get("sec_type") or raw.get("secType")
     is_opt = _is_option(asset_class)
+    qty_raw = to_float(raw.get("size"))
     return {
         "exec_id": raw.get("execution_id") or raw.get("exec_id"),
         "account_id": account_id or raw.get("account") or raw.get("acctId"),
@@ -177,7 +178,7 @@ def normalize_trade(raw: dict, account_id: str | None = None) -> dict:
         "right": (raw.get("put_or_call") or None) if is_opt else None,
         "strike": to_float(raw.get("strike")) if is_opt else None,
         "expiry": parse_expiry(raw.get("expiry")) if is_opt else None,
-        "qty": to_float(raw.get("size")),
+        "qty": abs(qty_raw) if qty_raw is not None else None,
         "price": to_float(raw.get("price")),
         "commission": to_float(raw.get("commission")),
         "realized_pnl": to_float(raw.get("realized_pnl")),

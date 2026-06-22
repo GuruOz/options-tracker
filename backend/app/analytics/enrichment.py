@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
+from app.analytics.decay import theta_decay_curve
 from app.db.models import PositionSnapshot, MarketSnapshot
 from app.schemas.responses import PositionOut
 
@@ -85,6 +86,17 @@ def enrich_positions(
         else:
             data["intrinsic_value"] = None
             data["extrinsic_value"] = None
+
+        # Theta-decay curve: modeled extrinsic value from today's DTE down to expiry,
+        # anchored to the real extrinsic above so it lines up with the table.
+        data["decay_curve"] = theta_decay_curve(
+            p.right,
+            p.strike,
+            underlying_price,
+            p.iv,
+            data["dte"],
+            anchor_extrinsic=data["extrinsic_value"],
+        )
 
         # Premium Captured
         # avg_cost for a short position (credit) is positive.
