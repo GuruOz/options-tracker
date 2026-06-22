@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getJSON } from "./api/client";
 import { useSession } from "./api/useSession";
@@ -8,6 +9,8 @@ import { UnderlyingsPanel } from "./components/UnderlyingsPanel";
 import { SignalPanel } from "./components/SignalPanel";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { PositionsPanel } from "./components/PositionsPanel";
+import { DecayPanel } from "./components/DecayPanel";
+import { ProfitPanel } from "./components/ProfitPanel";
 import { RiskPanel } from "./components/RiskPanel";
 import { IncomePanel } from "./components/IncomePanel";
 import { PanelGrid } from "./components/PanelGrid";
@@ -15,6 +18,8 @@ import { PanelGrid } from "./components/PanelGrid";
 export default function App() {
   const session = useSession();
   const { theme, toggleTheme } = useTheme();
+  // Which position the decay & profit panels chart; driven by clicking a row in PositionsPanel.
+  const [selectedConid, setSelectedConid] = useState<number | null>(null);
   const { data: meta } = useQuery({
     queryKey: ["meta"],
     queryFn: () => getJSON<Meta>("/api/meta"),
@@ -46,7 +51,9 @@ export default function App() {
         <UnderlyingsPanel />
         <SignalPanel />
         <AlertsPanel />
-        <PositionsPanel />
+        <PositionsPanel selectedConid={selectedConid} onSelect={setSelectedConid} />
+        <DecayPanel selectedConid={selectedConid} onSelect={setSelectedConid} />
+        <ProfitPanel selectedConid={selectedConid} onSelect={setSelectedConid} />
         <RiskPanel />
         <IncomePanel />
       </div>

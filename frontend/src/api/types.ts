@@ -49,10 +49,16 @@ export interface Position {
   cushion_pct: number | null;
   intrinsic_value: number | null;
   extrinsic_value: number | null;
+  decay_curve: DecayPoint[] | null;
   status: string | null;
   chain_id: string | null;
   source: string | null;
   last_updated: string | null;
+}
+
+export interface DecayPoint {
+  dte: number;
+  extrinsic: number;
 }
 
 export interface AccountSummary {

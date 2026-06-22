@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getJSON } from "../api/client";
 import type { Position, RollChain, Trade } from "../api/types";
@@ -35,7 +35,13 @@ function StatusPill({ status }: { status: string | null }) {
   return <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide ${color}`}>{status}</span>;
 }
 
-export function PositionsPanel() {
+export function PositionsPanel({
+  selectedConid,
+  onSelect,
+}: {
+  selectedConid: number | null;
+  onSelect: (conid: number) => void;
+}) {
   const [showClosed, setShowClosed] = useState(false);
   const [showTrades, setShowTrades] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
@@ -79,6 +85,13 @@ export function PositionsPanel() {
 
   const chainEntries = Array.from(grouped.entries());
   const closedList = closedChains ?? [];
+
+  // Default the decay panel to the first chartable position once data lands, so
+  // the panel and the highlighted row stay in sync from the start.
+  const firstChartable = rows.find((p) => (p.decay_curve?.length ?? 0) > 1)?.conid ?? null;
+  useEffect(() => {
+    if (selectedConid == null && firstChartable != null) onSelect(firstChartable);
+  }, [selectedConid, firstChartable, onSelect]);
 
   return (
     <section className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -139,11 +152,13 @@ export function PositionsPanel() {
                   chainId={chainId}
                   chain={chain}
                   positions={chainPositions}
+                  selectedConid={selectedConid}
+                  onSelect={onSelect}
                 />
               );
             })}
             {ungrouped.map((p) => (
-              <PositionRow key={p.conid} p={p} />
+              <PositionRow key={p.conid} p={p} selected={p.conid === selectedConid} onSelect={onSelect} />
             ))}
           </tbody>
         </table>
@@ -303,7 +318,19 @@ export function PositionsPanel() {
   );
 }
 
-function ChainGroup({ chainId, chain, positions }: { chainId: string; chain: RollChain | undefined; positions: Position[] }) {
+function ChainGroup({
+  chainId,
+  chain,
+  positions,
+  selectedConid,
+  onSelect,
+}: {
+  chainId: string;
+  chain: RollChain | undefined;
+  positions: Position[];
+  selectedConid: number | null;
+  onSelect: (conid: number) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [linking, setLinking] = useState(false);
   const queryClient = useQueryClient();
@@ -440,20 +467,40 @@ function ChainGroup({ chainId, chain, positions }: { chainId: string; chain: Rol
         </tr>
       )}
       {positions.map((p) => (
-        <PositionRow key={p.conid} p={p} />
+        <PositionRow key={p.conid} p={p} selected={p.conid === selectedConid} onSelect={onSelect} />
       ))}
     </>
   );
 }
 
-function PositionRow({ p }: { p: Position }) {
+function PositionRow({ p, selected, onSelect }: { p: Position; selected: boolean; onSelect: (conid: number) => void }) {
   const myAvg = p.avg_cost != null ? p.avg_cost / 100 : null;
   const intrinsicMoney = p.intrinsic_value != null && p.position != null ? p.intrinsic_value * 100 * Math.abs(p.position) : null;
   const extrinsicMoney = p.extrinsic_value != null && p.position != null ? p.extrinsic_value * 100 * Math.abs(p.position) : null;
+  const hasCurve = (p.decay_curve?.length ?? 0) > 1;
 
   return (
-    <tr className="border-b border-slate-50 dark:border-slate-800/50 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+    <tr
+      className={`border-b border-slate-50 dark:border-slate-800/50 last:border-0 transition-colors ${
+        selected ? "bg-emerald-50 dark:bg-emerald-900/15" : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
+      } ${hasCurve ? "cursor-pointer" : ""}`}
+      onClick={hasCurve ? () => onSelect(p.conid) : undefined}
+      title={hasCurve ? "Chart time-value decay in the panel below" : undefined}
+    >
       <td className="py-2 pr-3 font-medium text-slate-800 dark:text-slate-100">
+        {hasCurve && (
+          <svg
+            viewBox="0 0 10 10"
+            className={`mr-1.5 inline-block h-2.5 w-2.5 align-[-1px] ${selected ? "text-emerald-500" : "text-slate-300 dark:text-slate-600"}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M1 9 L3.5 5 L6 6.5 L9 1.5" />
+          </svg>
+        )}
         {p.symbol ?? "—"}
         {p.chain_id && <span className="ml-2 text-[10px] text-slate-400" title="Roll Chain">🔗</span>}
       </td>
