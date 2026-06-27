@@ -38,6 +38,8 @@ class PositionOut(_ORM):
     underlying_price: float | None = None
     premium_captured_pct: float | None = None
     cushion_pct: float | None = None
+    breakeven: float | None = None
+    breakeven_cushion_pct: float | None = None
     intrinsic_value: float | None = None
     extrinsic_value: float | None = None
     decay_curve: list[DecayPoint] | None = None

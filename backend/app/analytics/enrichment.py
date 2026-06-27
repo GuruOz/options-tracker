@@ -121,6 +121,29 @@ def enrich_positions(
         else:
             data["cushion_pct"] = None
 
+        # Break-even cushion: a short option's break-even is strike ∓ the premium
+        # you collected (put: strike − premium; call: strike + premium), so the
+        # *real* buffer before the trade turns into a loss is wider than the raw
+        # strike cushion. Reported alongside cushion_pct, not instead of it.
+        data["breakeven"] = None
+        data["breakeven_cushion_pct"] = None
+        if (
+            p.position is not None and float(p.position) < 0
+            and p.strike is not None and p.avg_cost is not None and float(p.avg_cost) > 0
+            and underlying_price is not None and float(underlying_price) > 0
+        ):
+            u = float(underlying_price)
+            s = float(p.strike)
+            prem = float(p.avg_cost) / 100.0  # premium collected, per share
+            if p.right in ("P", "PUT"):
+                be = s - prem
+                data["breakeven"] = be
+                data["breakeven_cushion_pct"] = (u - be) / u
+            elif p.right in ("C", "CALL"):
+                be = s + prem
+                data["breakeven"] = be
+                data["breakeven_cushion_pct"] = (be - u) / u
+
         # Status rules. The first three are critical (TAKE PROFIT / AT RISK /
         # EXPIRING). WATCH is a softer tier for a position sitting *near* a
         # threshold — so one hovering on the line (e.g. cushion ~3% as the live
