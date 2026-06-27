@@ -124,9 +124,9 @@ settings API (`GET`/`PUT /api/settings`); defaults reproduce the values in the
 appendix below.
 
 Key env vars for session behaviour:
-- `IBEAM_MAINTENANCE_INTERVAL=0` — disables IBEAM's periodic auto-maintenance
+- `IBEAM_MAINTENANCE_INTERVAL=86400` — effectively disables IBEAM's periodic auto-maintenance (auth is user-initiated; **never use `0`** — IBEAM treats it as 1 second)
 - `POLL_PUBLIC_PRICE_SECONDS=300` — cadence for yfinance price refresh
-- `PULL_LOGIN_TIMEOUT_SECONDS=45` — max seconds to wait for 2FA during login
+- `PULL_LOGIN_TIMEOUT_SECONDS=120` — max seconds to wait for 2FA during login (must exceed IBEAM startup ~120s and stay under nginx's 180s proxy timeout)
 - `DOCKER_IBEAM_CONTAINER` — container name for on-demand gateway restart
 
 ---
@@ -135,15 +135,68 @@ Key env vars for session behaviour:
 
 Your history lives in the `pgdata` Docker volume.
 
-```bash
-# Backup
-docker compose exec -T db pg_dump -U options options > backup.sql
+**Automated (default):** the `db-backup` service writes a gzipped `pg_dump` to
+`./backups/` on the host nightly and prunes dumps older than 7 days. Tune with
+`BACKUP_INTERVAL_SECONDS` / `BACKUP_KEEP_DAYS` in `.env`. The `backups/` dir is
+git-ignored. Copy it off-box periodically — a backup on the same disk as `pgdata`
+won't survive a disk failure.
 
-# Restore (into a running, empty db)
-docker compose exec -T db psql -U options -d options < backup.sql
+```bash
+# Restore the latest automated dump (into a running db)
+gunzip -c backups/options-YYYYmmdd-HHMMSS.sql.gz | docker compose exec -T db psql -U options -d options
+
+# Manual one-off backup
+docker compose exec -T db pg_dump -U options options > backup.sql
 ```
 
 Adjust the user/db names if you changed them in `.env`.
+
+---
+
+## Updating safely
+
+This is a 24/7 stack — pull and redeploy deliberately.
+
+```bash
+git pull
+docker compose up -d --build          # rebuilds backend/frontend; DB migrations
+                                      # auto-apply on boot (alembic upgrade head)
+```
+
+- **A backend rebuild logs you out of IBKR** (the session is in-memory and the
+  monitor releases it on restart). After redeploying, click **Pull Fresh Data**
+  and approve the 2FA push to restore the session. Roll-chain/analytics rebuilds
+  stay idle until you re-authenticate.
+- **Dependencies are pinned** (`backend/requirements.txt` exact `==`, the gateway
+  image by digest, the frontend `package-lock.json`). Bump versions deliberately
+  and let **CI** (`.github/workflows/ci.yml`: backend `pytest` + frontend
+  build + `docker compose config`) go green before deploying.
+- **Migrations:** add a new Alembic revision under
+  `backend/app/db/migrations/versions/`; it runs automatically on the next boot.
+  Migrations are forward-only — back up first (see above) before a risky one.
+
+---
+
+## Known limitations (beta)
+
+- **Single IBKR account / single user.** One gateway authenticates one account;
+  there is no multi-tenant mode.
+- **Re-login required after every redeploy** (see *Updating safely*).
+- **IBEAM auth is brittle** — IBKR periodically changes its login page, which can
+  break the gateway's selectors (see *Troubleshooting* + `docker-compose.yml`).
+- **Manual cross-strike roll links** affect the next rebuild; a malformed link
+  used to be able to stall the rebuild (fixed — rebuild is now FK-safe).
+- **Market-data gaps show `n/a`**, not guesses, when you lack the IBKR
+  subscription; public yfinance prices/IV are the fallback.
+- Figures are **commission-net dollars** and reconcile to the Excel tracker as
+  `points × 100 − commissions`; the only expected delta vs the sheet is
+  commissions (the sheet omits them).
+
+---
+
+## License
+
+[MIT](LICENSE) © GuruOz. Informational only — not investment advice.
 
 ---
 

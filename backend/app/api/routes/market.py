@@ -77,7 +77,9 @@ def _build_points(
 
 @router.get("/market", response_model=list[MarketOut])
 async def get_market(db: AsyncSession = Depends(get_session)):
-    return await repo.latest_market(db)
+    # Latest *priced* row per symbol: a null-price IBKR poll must not blank a spot
+    # a good yfinance refresh just wrote (see repo.latest_priced_market).
+    return await repo.latest_priced_market(db)
 
 
 @router.get("/market/history", response_model=MarketHistoryOut)

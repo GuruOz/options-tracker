@@ -4,6 +4,13 @@ name: options-tracker
 # Only the `frontend` (nginx) publishes a host port. The gateway, backend, db
 # and redis are reachable ONLY on this private internal network.
 
+# Cap per-container log growth so a 24/7 box can't fill its disk with logs.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   db:
     image: postgres:16-alpine
@@ -20,11 +27,15 @@ services:
       timeout: 5s
       retries: 10
     networks: [internal]
+    logging: *default-logging
+    mem_limit: 512m
     # Not published to the host. Uncomment for local DB debugging only:
     # ports: ["127.0.0.1:5432:5432"]
 
   ibkr-gateway:
-    image: voyz/ibeam:latest
+    # Pinned by digest for reproducible 24/7 builds (was :latest). To update,
+    # pull a newer voyz/ibeam, test login, then replace this digest.
+    image: voyz/ibeam@sha256:6a9e1eb91c82235f8e52ec615c1686e2ca8254a758fc438d9ed1b10682508ec3
     restart: "no"
     environment:
       IBEAM_ACCOUNT: ${IBEAM_ACCOUNT:?set IBEAM_ACCOUNT in .env}
@@ -67,6 +78,8 @@ services:
       retries: 10
       start_period: 40s
     networks: [internal]
+    logging: *default-logging
+    mem_limit: 1536m
     # Never published to the host's public interface.
 
   backend:
@@ -112,6 +125,8 @@ services:
       retries: 10
       start_period: 30s
     networks: [internal]
+    logging: *default-logging
+    mem_limit: 768m
 
   frontend:
     build:
@@ -129,6 +144,44 @@ services:
       timeout: 5s
       retries: 5
     networks: [internal]
+    logging: *default-logging
+    mem_limit: 192m
+
+  # Nightly Postgres backup. Dumps a gzipped pg_dump into ./backups on the host
+  # and prunes dumps older than BACKUP_KEEP_DAYS, so 24/7 history survives a lost
+  # pgdata volume. Restore: gunzip -c backups/<file>.sql.gz | docker compose exec -T db psql -U options -d options
+  db-backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-options}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-options}
+      PGDATABASE: ${POSTGRES_DB:-options}
+    volumes:
+      - ./backups:/backups
+    networks: [internal]
+    logging: *default-logging
+    mem_limit: 256m
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        keep=${BACKUP_KEEP_DAYS:-7}; interval=${BACKUP_INTERVAL_SECONDS:-86400}
+        echo "[db-backup] started; interval=$${interval}s keep=$${keep}d -> /backups"
+        while true; do
+          ts=$$(date +%Y%m%d-%H%M%S); out="/backups/options-$$ts.sql.gz"
+          if pg_dump | gzip > "$$out"; then
+            echo "[db-backup] wrote $$out ($$(du -h "$$out" | cut -f1))"
+          else
+            echo "[db-backup] FAILED at $$ts" >&2; rm -f "$$out"
+          fi
+          find /backups -name 'options-*.sql.gz' -mtime +$$keep -delete 2>/dev/null || true
+          sleep "$$interval"
+        done
 
   # Optional. Enabled only with:  docker compose --profile redis up
   redis:
@@ -137,6 +190,8 @@ services:
     profiles: ["redis"]
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     networks: [internal]
+    logging: *default-logging
+    mem_limit: 128m
 
 volumes:
   pgdata:

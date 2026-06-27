@@ -25,6 +25,8 @@ Thumbs.db
 
 # Docker / data
 pgdata/
+# Automated DB backups (the db-backup service writes gzipped dumps here)
+backups/
 # IBEAM login debug screenshots (runtime artifacts)
 gateway/outputs/
 
