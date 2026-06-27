@@ -154,6 +154,34 @@ class MarketSnapshot(Base):
     )
 
 
+class DailyBar(Base):
+    """Daily close history for underlyings + VIX — backs the market-context chart.
+
+    The market poller already fetches a 1y daily history every cycle (for the
+    indicator math) but only persisted the latest point-in-time snapshot. Storing
+    the daily closes here gives the 6-12 month price chart (50-day SMA overlay +
+    VIX) a cache to read, honouring the spec's "panels read from the Postgres
+    cache" principle instead of refetching on every request. Idempotent upsert by
+    ``(conid, bar_date)``. VIX is stored under a synthetic conid with
+    ``is_vix=True`` and queried by that flag (it is market-wide, not per-symbol).
+    """
+
+    __tablename__ = "daily_bars"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    conid: Mapped[int] = mapped_column(BigInteger, index=True)
+    symbol: Mapped[str | None] = mapped_column(String(32))
+    bar_date: Mapped[date] = mapped_column(Date)
+    close: Mapped[float | None] = mapped_column(Money)
+    is_vix: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    source: Mapped[str | None] = mapped_column(String(16))  # ibkr / public
+
+    __table_args__ = (
+        UniqueConstraint("conid", "bar_date", name="uq_daily_bar_conid_date"),
+        Index("ix_daily_bar_conid_date", "conid", "bar_date"),
+    )
+
+
 class SignalHistory(Base):
     """Composite score plus every sub-score, raw input, and weight used.
 

@@ -12,6 +12,7 @@ from app.analytics.rolls import build_roll_chains
 from app.clients.ibkr import IBKRClient
 from app.core.logging import get_logger
 from app.core.state import broadcast_event, session_state
+from app.db import repo
 from app.db.base import AsyncSessionLocal
 from app.db.models import ChainAdjustment, Execution, RollChain, RollChainLeg
 
@@ -23,6 +24,16 @@ async def build_rolls(client: IBKRClient) -> None:  # noqa: ARG001 — client ke
     if not session_state.account_id:
         return
     account_id = session_state.account_id
+
+    # Collapse cross-source duplicate fills (live poll vs Flex/CSV) before
+    # building, so a fill reported by both feeds isn't double-counted and
+    # doesn't spawn a phantom strike-0 chain. The poll feed won't re-add these
+    # on its next run (it skips fills an authoritative feed already covers).
+    async with AsyncSessionLocal() as session:
+        removed = await repo.dedupe_executions(session, account_id)
+        if removed:
+            await session.commit()
+            log.info("poll_duplicates_superseded", count=removed)
 
     async with AsyncSessionLocal() as session:
         # Load all executions
@@ -52,7 +63,10 @@ async def build_rolls(client: IBKRClient) -> None:  # noqa: ARG001 — client ke
 
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-        # Wipe auto-generated chains and their legs
+        rebuilt_ids = {c["chain_id"] for c in chains_data}
+
+        # Clear legs for all auto-generated chains; they're re-inserted below.
+        # Legs have no inbound FK, so this is always safe.
         await session.execute(
             delete(RollChainLeg)
             .where(
@@ -64,12 +78,13 @@ async def build_rolls(client: IBKRClient) -> None:  # noqa: ARG001 — client ke
                 )
             )
         )
-        await session.execute(
-            delete(RollChain)
-            .where(RollChain.account_id == account_id, RollChain.is_manual.is_(False))
-        )
 
-        # Upsert chains
+        # IMPORTANT: upsert the rebuilt chains BEFORE deleting any chain row.
+        # A chain still referenced by a chain_adjustment (e.g. a manual link)
+        # cannot be deleted — the adjustments FK blocks it and rolls back the
+        # whole rebuild, freezing the pipeline indefinitely. Since a chain's id
+        # is deterministic, every chain an adjustment targets is re-produced and
+        # simply updated in place here, never momentarily removed.
         for c in chains_data:
             stmt = (
                 pg_insert(RollChain)
@@ -98,6 +113,26 @@ async def build_rolls(client: IBKRClient) -> None:  # noqa: ARG001 — client ke
                     .on_conflict_do_nothing(constraint="uq_chain_exec")
                 )
                 await session.execute(stmt)
+
+        # Drop only the stale auto chains this rebuild no longer produces (e.g. a
+        # phantom strike-0 chain whose lossy poll rows were since deduped away).
+        # First clear any adjustments that pointed at them — a dead manual edit
+        # whose target chain is gone — so the chain delete isn't FK-blocked.
+        stale_chains = select(RollChain.chain_id).where(
+            RollChain.account_id == account_id,
+            RollChain.is_manual.is_(False),
+            RollChain.chain_id.notin_(rebuilt_ids),
+        )
+        await session.execute(
+            delete(ChainAdjustment).where(ChainAdjustment.chain_id.in_(stale_chains))
+        )
+        await session.execute(
+            delete(RollChain).where(
+                RollChain.account_id == account_id,
+                RollChain.is_manual.is_(False),
+                RollChain.chain_id.notin_(rebuilt_ids),
+            )
+        )
 
         await session.commit()
 

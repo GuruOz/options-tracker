@@ -2,29 +2,12 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getJSON } from "../api/client";
 import type { Position, RollChain, Trade } from "../api/types";
+// `chainLabel` ("NVDA 216P") and `money` live in ./ChainTimeline so the timeline
+// and alerts panel can share the same formatting.
+import { ChainTimeline, money, chainLabel } from "./ChainTimeline";
 
 const num = (v: number | null, d = 2) => (v == null ? "—" : v.toFixed(d));
-const money = (v: number | null) =>
-  v == null ? "—" : v.toLocaleString(undefined, { maximumFractionDigits: 0 });
 const percent = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
-
-// "NVDA 216P" from the chain's underlying, strike and right; "NVDA 216→210P"
-// when a chain spans strikes (a manually-linked cross-strike roll). String(216)
-// -> "216" and String(217.5) -> "217.5", so no trailing-zero formatting needed.
-const chainLabel = (c: RollChain) => {
-  const sym = c.underlying_symbol ?? "—";
-  const right = c.right ?? "";
-
-  const openStrikes = (c.legs ?? [])
-    .filter((l) => l.role === "open" && l.strike != null)
-    .map((l) => l.strike as number);
-  const first = openStrikes.length ? openStrikes[0] : c.strike;
-  const last = openStrikes.length ? openStrikes[openStrikes.length - 1] : c.strike;
-
-  if (first == null) return right ? `${sym} ${right}` : sym;
-  const strikeText = last != null && last !== first ? `${first}→${last}` : `${first}`;
-  return `${sym} ${strikeText}${right}`;
-};
 
 function StatusPill({ status }: { status: string | null }) {
   if (!status) return <span className="text-slate-400">—</span>;
@@ -32,6 +15,7 @@ function StatusPill({ status }: { status: string | null }) {
   if (status === "TAKE PROFIT") color = "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
   else if (status === "AT RISK") color = "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
   else if (status === "EXPIRING") color = "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
+  else if (status === "WATCH") color = "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400";
   return <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide ${color}`}>{status}</span>;
 }
 
@@ -45,6 +29,7 @@ export function PositionsPanel({
   const [showClosed, setShowClosed] = useState(false);
   const [showTrades, setShowTrades] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
+  const [timelineChain, setTimelineChain] = useState<RollChain | null>(null);
   const queryClient = useQueryClient();
 
   const { data: positions, isFetching: posFetching } = useQuery({
@@ -128,7 +113,7 @@ export function PositionsPanel({
             <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700">
               <th className="py-2 pr-3" title="Underlying ticker. 🔗 marks a position that belongs to a roll chain.">Symbol</th>
               <th className="pr-3" title="Security type, plus the option right (P/C) and strike.">Type</th>
-              <th className="pr-3" title="Lifecycle pill: TAKE PROFIT (>=70% premium captured), AT RISK (cushion < 3%), or EXPIRING (<=2 DTE).">Status</th>
+              <th className="pr-3" title="Lifecycle pill: TAKE PROFIT (>=70% premium captured), AT RISK (cushion < 3%), EXPIRING (<=2 DTE), or WATCH (near a threshold: >=65% captured or cushion < 5%).">Status</th>
               <th className="pr-3 text-right" title="Days to expiration (calendar days until the contract expires).">DTE</th>
               <th className="pr-3 text-right" title="Signed contract quantity. Negative = short (sold).">Qty</th>
               <th className="pr-3 text-right" title="Current mark price of the option, per share.">Last</th>
@@ -154,6 +139,7 @@ export function PositionsPanel({
                   positions={chainPositions}
                   selectedConid={selectedConid}
                   onSelect={onSelect}
+                  onOpenTimeline={setTimelineChain}
                 />
               );
             })}
@@ -195,8 +181,13 @@ export function PositionsPanel({
                 </thead>
                 <tbody>
                   {closedList.map((c) => (
-                    <tr key={c.chain_id} className="border-b border-slate-50 dark:border-slate-800/50 last:border-0">
-                      <td className="py-2 pr-3 font-medium text-slate-700 dark:text-slate-300">{chainLabel(c)}</td>
+                    <tr
+                      key={c.chain_id}
+                      className="cursor-pointer border-b border-slate-50 hover:bg-slate-50 dark:border-slate-800/50 dark:hover:bg-slate-800/50 last:border-0"
+                      onClick={() => setTimelineChain(c)}
+                      title="View chronological timeline"
+                    >
+                      <td className="py-2 pr-3 font-medium text-slate-700 dark:text-slate-300">📜 {chainLabel(c)}</td>
                       <td className="pr-3 text-right tabular-nums dark:text-slate-300">{c.leg_count}</td>
                       <td className="pr-3 text-right text-xs text-slate-400">{c.opened_at ? new Date(c.opened_at).toLocaleDateString() : "—"}</td>
                       <td className="pr-3 text-right text-xs text-slate-400">{c.closed_at ? new Date(c.closed_at).toLocaleDateString() : "—"}</td>
@@ -293,8 +284,8 @@ export function PositionsPanel({
                       {t.exec_time ? new Date(t.exec_time).toLocaleString() : "—"}
                     </td>
                     <td className="pr-3 font-medium text-slate-700 dark:text-slate-300">{t.symbol ?? "—"}</td>
-                    <td className={`pr-3 text-xs font-semibold ${t.side === "S" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                      {t.side === "S" ? "SELL" : t.side === "B" ? "BUY" : t.side ?? "—"}
+                    <td className={`pr-3 text-xs font-semibold ${t.side === "S" ? "text-emerald-600 dark:text-emerald-400" : t.side === "A" ? "text-rose-600 dark:text-rose-400" : "text-red-600 dark:text-red-400"}`}>
+                      {t.side === "S" ? "SELL" : t.side === "B" ? "BUY" : t.side === "A" ? "ASSIGN" : t.side ?? "—"}
                     </td>
                     <td className="pr-3 dark:text-slate-300">{t.right ?? "—"}</td>
                     <td className="pr-3 text-right tabular-nums dark:text-slate-300">{t.strike != null ? t.strike : "—"}</td>
@@ -314,6 +305,8 @@ export function PositionsPanel({
         </div>
         )}
       </div>
+
+      <ChainTimeline chain={timelineChain} onClose={() => setTimelineChain(null)} />
     </section>
   );
 }
@@ -324,16 +317,20 @@ function ChainGroup({
   positions,
   selectedConid,
   onSelect,
+  onOpenTimeline,
 }: {
   chainId: string;
   chain: RollChain | undefined;
   positions: Position[];
   selectedConid: number | null;
   onSelect: (conid: number) => void;
+  onOpenTimeline: (chain: RollChain) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [linking, setLinking] = useState(false);
   const queryClient = useQueryClient();
+  const assigned = (chain?.legs ?? []).some(
+    (l) => l.role === "assignment" || l.role === "assignment_stock",
+  );
 
   const { data: allChains } = useQuery({
     queryKey: ["chains", "all"],
@@ -365,14 +362,23 @@ function ChainGroup({
 
   return (
     <>
-      <tr className="bg-slate-50 dark:bg-slate-800/50 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-t border-slate-200 dark:border-slate-700" onClick={() => setExpanded(!expanded)}>
+      <tr
+        className="bg-slate-50 dark:bg-slate-800/50 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-t border-slate-200 dark:border-slate-700"
+        onClick={() => chain && onOpenTimeline(chain)}
+        title="View chronological timeline"
+      >
         <td colSpan={15} className="py-2 px-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 text-xs">
-              <span className={`transform transition-transform text-slate-400 ${expanded ? "rotate-90" : ""}`}>&#9654;</span>
+              <span className="text-slate-400">📜</span>
               <span className="text-amber-600 dark:text-amber-400 font-semibold">🔗 Chain</span>
               {chain && (
                 <span className="text-slate-600 dark:text-slate-300 font-bold tracking-wide">{chainLabel(chain)}</span>
+              )}
+              {assigned && (
+                <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:bg-rose-900/30 dark:text-rose-400">
+                  ⚠️ Assigned
+                </span>
               )}
               {chain?.cumulative_credit != null && (
                 <span className={`font-semibold tabular-nums px-2 py-0.5 rounded-full ${chain.cumulative_credit >= 0 ? "bg-emerald-100/50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-red-100/50 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>
@@ -421,51 +427,6 @@ function ChainGroup({
           </div>
         </td>
       </tr>
-      {expanded && chain?.legs && chain.legs.length > 0 && (
-        <tr className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-          <td colSpan={15} className="p-0">
-            <div className="pl-8 py-2 pr-4 bg-slate-50/50 dark:bg-slate-800/20 shadow-inner">
-              <table className="w-full text-[11px] text-slate-500 dark:text-slate-400">
-                <thead>
-                  <tr className="text-left font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700">
-                    <th className="py-1 pr-2">Date</th>
-                    <th className="pr-2">Role</th>
-                    <th className="pr-2">Action</th>
-                    <th className="pr-2 text-right">Strike</th>
-                    <th className="pr-2 text-right">Price</th>
-                    <th className="text-right">Credit</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {chain.legs.map(leg => {
-                    const roleLabels: Record<string, string> = {
-                      open: "Opened",
-                      close: "Closed",
-                      roll: "Rolled",
-                      assignment: "Assigned (Opt)",
-                      assignment_stock: "Stock Assigned",
-                      stock_close: "Stock Sold",
-                      expired: "Expired Worthless",
-                    };
-                    return (
-                    <tr key={leg.leg_id} className="border-b border-slate-100 dark:border-slate-800/50 last:border-0">
-                      <td className="py-1 pr-2 whitespace-nowrap">{leg.date ? new Date(leg.date).toLocaleString() : "—"}</td>
-                      <td className="pr-2 font-medium">{roleLabels[leg.role] ?? leg.role}</td>
-                      <td className="pr-2">{leg.action ?? "—"}</td>
-                      <td className="pr-2 text-right tabular-nums">{leg.strike ?? "—"}</td>
-                      <td className="pr-2 text-right tabular-nums">{leg.price.toFixed(2)}</td>
-                      <td className={`text-right tabular-nums font-medium ${leg.credit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                        {money(leg.credit)}
-                      </td>
-                    </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </td>
-        </tr>
-      )}
       {positions.map((p) => (
         <PositionRow key={p.conid} p={p} selected={p.conid === selectedConid} onSelect={onSelect} />
       ))}

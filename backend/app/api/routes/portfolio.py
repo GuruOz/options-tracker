@@ -34,7 +34,7 @@ async def get_positions(db: AsyncSession = Depends(get_session)):
     if not options:
         return []
         
-    markets = await repo.latest_market(db)
+    markets = await repo.latest_priced_market(db)
     roll_chains = await repo.open_roll_chains(db, session_state.account_id)
     
     enriched = enrich_positions(options, markets, roll_chains)
@@ -57,7 +57,7 @@ async def get_alerts(db: AsyncSession = Depends(get_session)):
     if not options:
         return []
         
-    markets = await repo.latest_market(db)
+    markets = await repo.latest_priced_market(db)
     roll_chains = await repo.open_roll_chains(db, session_state.account_id)
     
     enriched = enrich_positions(options, markets, roll_chains)

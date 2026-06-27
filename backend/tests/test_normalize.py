@@ -6,12 +6,14 @@ from app.clients.ibkr.normalize import (
     normalize_trade,
     parse_expiry,
     parse_history,
+    parse_history_bars,
     parse_option_desc,
     parse_snapshot_row,
     parse_trade_time,
     parse_underlying_quote,
     to_float,
 )
+from app.core.occ import parse_occ_symbol
 
 
 def test_to_float_tolerant():
@@ -132,6 +134,33 @@ def test_normalize_trade_commission_and_ids():
     assert n["strike"] == 150.0
 
 
+def test_parse_occ_symbol_compact():
+    p = parse_occ_symbol("NVDA 260618P00216000")
+    assert p["underlying"] == "NVDA"
+    assert p["right"] == "P"
+    assert p["strike"] == 216.0
+    assert p["expiry"] == date(2026, 6, 18)
+    # Bare stock symbol -> underlying only, no option components.
+    s = parse_occ_symbol("NVDA")
+    assert s["underlying"] == "NVDA"
+    assert s["right"] is None and s["strike"] is None and s["expiry"] is None
+    assert parse_occ_symbol(None)["strike"] is None
+
+
+def test_normalize_trade_recovers_strike_from_osi_symbol():
+    # The trades feed left strike/right/expiry empty, but the OSI symbol carries
+    # them — without recovery the chain label degrades to "NVDA P".
+    raw = {
+        "execution_id": "x1", "symbol": "NVDA 260618P00216000", "side": "S",
+        "price": "2.0", "size": 1, "conid": 111, "sec_type": "OPT", "account": "U1",
+    }
+    n = normalize_trade(raw, account_id="U1")
+    assert n["right"] == "P"
+    assert n["strike"] == 216.0
+    assert n["expiry"] == date(2026, 6, 18)
+    assert n["symbol"] == "NVDA 260618P00216000"
+
+
 def test_parse_snapshot_row_greeks_and_iv_priority():
     row = {
         "conid": 265598, "31": "1.25", "84": "1.20", "86": "1.30", "7635": "1.25",
@@ -148,6 +177,21 @@ def test_parse_history_closes():
     raw = {"data": [{"t": 1, "c": 100.0}, {"t": 2, "c": "101.5"}, {"t": 3}]}
     assert parse_history(raw) == [100.0, 101.5]
     assert parse_history({}) == []
+
+
+def test_parse_history_bars_extracts_date_and_close():
+    # `t` is an epoch-ms timestamp: 1735689600000 -> 2025-01-01, +1 day -> 2025-01-02.
+    raw = {"data": [
+        {"t": 1735689600000, "c": 100.0},
+        {"t": 1735776000000, "c": "101.5"},
+        {"t": 1735862400000},   # no close -> skipped
+        {"c": 50.0},            # no timestamp -> skipped
+    ]}
+    assert parse_history_bars(raw) == [
+        (date(2025, 1, 1), 100.0),
+        (date(2025, 1, 2), 101.5),
+    ]
+    assert parse_history_bars({}) == []
 
 
 def test_parse_underlying_quote():

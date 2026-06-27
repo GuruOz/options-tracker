@@ -27,6 +27,18 @@ const canModel = (p: Position): boolean =>
   p.position != null &&
   p.position !== 0;
 
+// Why a position can't be modeled — surfaced on a muted chip / empty state instead
+// of silently dropping it, so every open option stays visible with an explanation.
+function modelReason(p: Position): string {
+  if (p.right == null || p.strike == null) return "not an option leg";
+  if (p.underlying_price == null) return `waiting for ${p.symbol ?? "the underlying"}'s spot price`;
+  if (p.iv == null) return "no implied vol from the feed yet";
+  if (p.dte == null || p.dte <= 0) return "expires today — nothing left to project";
+  if (p.mark == null) return "no live mark";
+  if (p.avg_cost == null) return "no entry cost recorded";
+  return "not modelable right now";
+}
+
 // "Nice" axis step (1/2/5 × 10ⁿ) so the price rows land on round numbers.
 function niceStep(raw: number): number {
   if (raw <= 0) return 1;
@@ -55,8 +67,11 @@ export function ProfitPanel({
     queryFn: () => getJSON<Position[]>("/api/positions"),
   });
 
-  const modelable = (positions ?? []).filter(canModel);
-  const active = modelable.find((p) => p.conid === selectedConid) ?? modelable[0] ?? null;
+  const all = positions ?? [];
+  const modelable = all.filter(canModel);
+  // Prefer the user's selection; otherwise default to a modelable position so the
+  // panel opens on a real grid, but never hide the non-modelable ones.
+  const active = all.find((p) => p.conid === selectedConid) ?? modelable[0] ?? all[0] ?? null;
 
   return (
     <section className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -66,31 +81,41 @@ export function ProfitPanel({
         Scholes with spot moving and IV held flat. Pick a position above to model it.
       </p>
 
-      {modelable.length === 0 ? (
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          No position can be modeled yet — needs strike, spot, IV, a future expiry and an entry cost (avg cost).
-        </p>
+      {all.length === 0 ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">No open option positions.</p>
       ) : (
         <>
           <div className="mb-4 flex flex-wrap gap-1.5">
-            {modelable.map((p) => {
+            {all.map((p) => {
               const on = active?.conid === p.conid;
+              const ok = canModel(p);
               return (
                 <button
                   key={p.conid}
                   onClick={() => onSelect(p.conid)}
+                  title={ok ? undefined : `Can’t model — ${modelReason(p)}`}
                   className={`rounded-full px-2.5 py-1 text-[11px] font-medium tabular-nums transition-colors ${
                     on
                       ? "bg-emerald-600 text-white dark:bg-emerald-500"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                      : ok
+                        ? "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                        : "border border-dashed border-slate-300 bg-transparent text-slate-400 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-500 dark:hover:bg-slate-800"
                   }`}
                 >
                   {posLabel(p)}
+                  {!ok && <span className="ml-1 opacity-70">⚠</span>}
                 </button>
               );
             })}
           </div>
-          {active && <ProfitChart key={active.conid} p={active} />}
+          {active && canModel(active) ? (
+            <ProfitChart key={active.conid} p={active} />
+          ) : active ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/30 dark:text-slate-400">
+              <span className="font-medium text-slate-600 dark:text-slate-300">{posLabel(active)}</span> can’t be
+              modeled — {modelReason(active)}.
+            </div>
+          ) : null}
         </>
       )}
     </section>

@@ -89,6 +89,23 @@ export interface Market {
   source: string | null;
 }
 
+export interface MarketHistoryPoint {
+  date: string; // "YYYY-MM-DD"
+  close: number | null;
+  sma: number | null;
+  sma200: number | null;
+  vix: number | null;
+}
+
+export interface MarketHistory {
+  conid: number;
+  symbol: string | null;
+  months: number;
+  sma_window: number;
+  points: MarketHistoryPoint[];
+  market: Market | null;
+}
+
 export interface SignalSubScores {
   iv_percentile: number | null;
   variance_premium: number | null;
@@ -176,6 +193,7 @@ export interface RollChainLeg {
   strike: number | null;
   price: number;
   credit: number;
+  qty?: number | null;
 }
 
 export interface RollChain {

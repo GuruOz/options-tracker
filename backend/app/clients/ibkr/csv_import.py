@@ -10,6 +10,8 @@ import io
 from datetime import date, datetime, timezone
 from typing import Any
 
+from app.core.occ import parse_occ_symbol
+
 
 _SIDE_MAP: dict[str, str] = {"b": "B", "s": "S", "buy": "B", "sell": "S"}
 
@@ -57,14 +59,19 @@ def _exec_id(row: dict[str, str], idx: int) -> str:
 
 
 def _parse_option_symbol(symbol: str | None) -> dict:
-    """Parse IBKR option description into underlying, strike, right, expiry."""
-    result: dict = {"underlying": None, "strike": None, "right": None, "expiry": None}
+    """Parse an IBKR option symbol/description into underlying/strike/right/expiry.
+
+    Prefers the compact OSI form ('NVDA 260618P00216000'); falls back to the
+    spaced activity-statement description ('NVDA 18JUN26 216 P').
+    """
+    occ = parse_occ_symbol(symbol)
+    if occ["strike"] is not None:
+        return occ
+
+    result: dict = {"underlying": occ["underlying"], "strike": None, "right": None, "expiry": None}
     if not symbol:
         return result
     parts = symbol.strip().split()
-    if not parts:
-        return result
-    result["underlying"] = parts[0]
     for p in parts[1:]:
         if p.upper() in ("P", "C"):
             result["right"] = p[:1].upper()

@@ -20,6 +20,7 @@ from app.clients.ibkr.fields import (
     GREEK_PRESENCE_FIELDS,
     IV_FIELD_CANDIDATES,
 )
+from app.core.occ import parse_occ_symbol
 
 _NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
@@ -52,9 +53,6 @@ def parse_expiry(value) -> date | None:
     return None
 
 
-_OSI_RE = re.compile(r"(\d{6})([CP])(\d{8})")
-
-
 def parse_option_desc(desc: str | None) -> dict:
     """Pull underlying/right/strike/expiry out of an IBKR option contractDesc.
 
@@ -62,23 +60,7 @@ def parse_option_desc(desc: str | None) -> dict:
     lives in the description, e.g. 'QQQ JUL2026 715 P [QQQ 260702P00715000 100]'.
     The bracketed OSI symbol (yymmdd + C/P + strike*1000) is the reliable source.
     """
-    out: dict = {"underlying": None, "right": None, "strike": None, "expiry": None}
-    if not desc:
-        return out
-    text = str(desc)
-    tokens = text.split()
-    if tokens:
-        out["underlying"] = tokens[0]
-    m = _OSI_RE.search(text)
-    if m:
-        yymmdd, right, strike = m.groups()
-        try:
-            out["expiry"] = datetime.strptime(yymmdd, "%y%m%d").date()
-        except ValueError:
-            pass
-        out["right"] = right
-        out["strike"] = int(strike) / 1000.0
-    return out
+    return parse_occ_symbol(desc)
 
 
 def parse_trade_time(raw: dict) -> datetime | None:
@@ -168,16 +150,31 @@ def normalize_trade(raw: dict, account_id: str | None = None) -> dict:
     asset_class = raw.get("sec_type") or raw.get("secType")
     is_opt = _is_option(asset_class)
     qty_raw = to_float(raw.get("size"))
+    symbol = ((raw.get("symbol") or raw.get("contract_description_1") or "")[:64]) or None
+
+    # The trades feed often omits strike/right/expiry for options; recover them
+    # from the OSI symbol so chains key + label correctly (e.g. "NVDA 216P").
+    right = strike = expiry = None
+    if is_opt:
+        right = raw.get("put_or_call") or None
+        strike = to_float(raw.get("strike")) or None  # feed reports 0 for opts
+        expiry = parse_expiry(raw.get("expiry"))
+        if right is None or strike is None or expiry is None:
+            occ = parse_occ_symbol(symbol)
+            right = right or occ["right"]
+            strike = strike if strike is not None else occ["strike"]
+            expiry = expiry or occ["expiry"]
+
     return {
         "exec_id": raw.get("execution_id") or raw.get("exec_id"),
         "account_id": account_id or raw.get("account") or raw.get("acctId"),
         "conid": to_int(raw.get("conid")),
-        "symbol": ((raw.get("symbol") or raw.get("contract_description_1") or "")[:64]) or None,
+        "symbol": symbol,
         "sec_type": asset_class,
         "side": raw.get("side"),
-        "right": (raw.get("put_or_call") or None) if is_opt else None,
-        "strike": to_float(raw.get("strike")) if is_opt else None,
-        "expiry": parse_expiry(raw.get("expiry")) if is_opt else None,
+        "right": right,
+        "strike": strike,
+        "expiry": expiry,
         "qty": abs(qty_raw) if qty_raw is not None else None,
         "price": to_float(raw.get("price")),
         "commission": to_float(raw.get("commission")),
@@ -200,6 +197,32 @@ def parse_history(raw: dict) -> list[float]:
         return []
     closes = [to_float(bar.get("c")) for bar in data if isinstance(bar, dict)]
     return [c for c in closes if c is not None]
+
+
+def parse_history_bars(raw: dict) -> list[tuple[date, float]]:
+    """Extract ``(date, close)`` pairs from /iserver/marketdata/history.
+
+    History bars carry an epoch-ms timestamp ``t`` and close ``c`` (oldest->newest).
+    Rows missing either, or with an unparseable timestamp, are skipped. Used to
+    persist the daily series that backs the market-context chart.
+    """
+    data = raw.get("data") if isinstance(raw, dict) else None
+    if not isinstance(data, list):
+        return []
+    out: list[tuple[date, float]] = []
+    for bar in data:
+        if not isinstance(bar, dict):
+            continue
+        close = to_float(bar.get("c"))
+        t = bar.get("t")
+        if close is None or t is None:
+            continue
+        try:
+            d = datetime.fromtimestamp(int(t) / 1000, tz=timezone.utc).date()
+        except (TypeError, ValueError, OSError, OverflowError):
+            continue
+        out.append((d, close))
+    return out
 
 
 def parse_underlying_quote(row: dict) -> dict:

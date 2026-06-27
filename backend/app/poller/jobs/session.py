@@ -26,6 +26,7 @@ from app.core.state import (
     broadcast_session,
     session_state,
 )
+from app.db import repo
 from app.db.base import AsyncSessionLocal
 from app.db.models import (
     Account,
@@ -139,12 +140,8 @@ async def _persist_pull_result(pull: dict, account_id: str) -> None:
                     continue
                 values.append({k: v for k, v in t.items() if k in _COLUMNS_TRADES})
             if values:
-                stmt = (
-                    pg_insert(Execution)
-                    .values(values)
-                    .on_conflict_do_nothing(index_elements=["exec_id"])
-                )
-                await session.execute(stmt)
+                # Poll feed: skip option fills an authoritative feed already has.
+                await repo.insert_poll_executions(session, values, account_id)
 
         market = pull.get("market", {})
         if market.get("status") == "ok":

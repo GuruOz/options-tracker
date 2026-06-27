@@ -121,15 +121,23 @@ def enrich_positions(
         else:
             data["cushion_pct"] = None
 
-        # Status rules
+        # Status rules. The first three are critical (TAKE PROFIT / AT RISK /
+        # EXPIRING). WATCH is a softer tier for a position sitting *near* a
+        # threshold — so one hovering on the line (e.g. cushion ~3% as the live
+        # price ticks) stays visible instead of flickering in and out of alerts.
+        cap = data["premium_captured_pct"]
+        cush = data["cushion_pct"]
+        dte = data["dte"]
         status = "OPEN"
-        if data["premium_captured_pct"] is not None and data["premium_captured_pct"] >= 0.7:
+        if cap is not None and cap >= 0.7:
             status = "TAKE PROFIT"
-        elif data["cushion_pct"] is not None and data["cushion_pct"] < 0.03:
+        elif cush is not None and cush < 0.03:
             status = "AT RISK"
-        elif data["dte"] is not None and data["dte"] <= 2:
+        elif dte is not None and dte <= 2:
             status = "EXPIRING"
-            
+        elif (cap is not None and cap >= 0.65) or (cush is not None and cush < 0.05):
+            status = "WATCH"
+
         data["status"] = status
 
         out.append(PositionOut.model_validate(data))

@@ -63,6 +63,27 @@ def test_enrich_short_call_itm():
     assert out.status == "AT RISK" # cushion takes precedence if < 0.03
 
 
+def test_enrich_watch_thin_cushion():
+    today = datetime.now(timezone.utc).date()
+    p = PositionSnapshot(
+        conid=4,
+        symbol="QQQ",
+        sec_type="OPT",
+        right="P",
+        strike=100.0,
+        expiry=today + timedelta(days=10),
+        position=-1.0,
+        avg_cost=100.0,
+        mark=0.5,  # 50% captured — below the 65% watch band, so cushion drives it
+    )
+    m = MarketSnapshot(symbol="QQQ", price=104.0)  # cushion = 4 / 104 = 3.85%
+
+    out = enrich_positions([p], [m], {})[0]
+    # Cushion 3.85% clears AT RISK (< 3%) but is inside the WATCH band (< 5%).
+    assert round(out.cushion_pct, 4) == 0.0385
+    assert out.status == "WATCH"
+
+
 def test_enrich_take_profit():
     p = PositionSnapshot(
         conid=3,

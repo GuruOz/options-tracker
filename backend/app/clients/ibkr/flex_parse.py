@@ -9,6 +9,8 @@ import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 from typing import Any
 
+from app.core.occ import parse_occ_symbol
+
 
 def _text(elem: ET.Element | None, key: str) -> str | None:
     """Get attribute value from an XML element."""
@@ -127,6 +129,18 @@ def parse_flex_xml(xml_text: str, account_id: str) -> list[dict[str, Any]]:
             put_call = _right_from_put_call(_text(trade, "putCall"))
             sec_type = asset
 
+            # Options can arrive without explicit strike/right/expiry attrs;
+            # recover them from the OSI symbol (e.g. 'NVDA 260618P00216000') so
+            # chains key + label correctly instead of degrading to "NVDA P".
+            right = put_call if sec_type in ("OPT", "FOP", "FUT") else None
+            strike = _float_val(trade, "strike") or None
+            expiry = _parse_expiry_date(_text(trade, "expiry"))
+            if sec_type in ("OPT", "FOP") and (right is None or strike is None or expiry is None):
+                occ = parse_occ_symbol(symbol)
+                right = right or occ["right"]
+                strike = strike if strike is not None else occ["strike"]
+                expiry = expiry or occ["expiry"]
+
             # IBKR flex reports `quantity` SIGNED (negative for sells). The rest
             # of the app (csv import, poll, OptionEAE below) stores the unsigned
             # magnitude and lets the `side` column carry direction — so store the
@@ -141,9 +155,9 @@ def parse_flex_xml(xml_text: str, account_id: str) -> list[dict[str, Any]]:
                 "symbol": symbol[:64] if symbol else None,
                 "sec_type": sec_type,
                 "side": side,
-                "right": put_call if sec_type in ("OPT", "FOP", "FUT") else None,
-                "strike": _float_val(trade, "strike"),
-                "expiry": _parse_expiry_date(_text(trade, "expiry")),
+                "right": right,
+                "strike": strike,
+                "expiry": expiry,
                 "qty": abs(qty_raw) if qty_raw is not None else None,
                 "price": _float_val(trade, "tradePrice"),
                 "commission": _float_val(trade, "ibCommission"),
@@ -178,6 +192,17 @@ def parse_flex_xml(xml_text: str, account_id: str) -> list[dict[str, Any]]:
             # If qty < 0 (short), we Buy to close. If qty > 0 (long), we Sell to close.
             side = "B" if qty < 0 else "S"
 
+            # EAE expiration rows frequently omit strike/right; recover them from
+            # the OSI symbol so the expired leg lands in the right chain.
+            eae_right = _right_from_put_call(_text(eae, "putCall"))
+            eae_strike = _float_val(eae, "strike") or None
+            eae_expiry = _parse_expiry_date(_text(eae, "expiry") or _text(eae, "date"))
+            if eae_right is None or eae_strike is None:
+                occ = parse_occ_symbol(symbol)
+                eae_right = eae_right or occ["right"]
+                eae_strike = eae_strike if eae_strike is not None else occ["strike"]
+                eae_expiry = eae_expiry or occ["expiry"]
+
             trades.append({
                 "exec_id": exec_id,
                 "account_id": account_id,
@@ -185,9 +210,9 @@ def parse_flex_xml(xml_text: str, account_id: str) -> list[dict[str, Any]]:
                 "symbol": symbol[:64] if symbol else None,
                 "sec_type": "OPT",
                 "side": side,
-                "right": _right_from_put_call(_text(eae, "putCall")),
-                "strike": _float_val(eae, "strike"),
-                "expiry": _parse_expiry_date(_text(eae, "expiry") or _text(eae, "date")),
+                "right": eae_right,
+                "strike": eae_strike,
+                "expiry": eae_expiry,
                 "qty": abs(qty),
                 "price": 0.0,
                 "commission": 0.0,

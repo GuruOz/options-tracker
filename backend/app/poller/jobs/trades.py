@@ -5,14 +5,12 @@ on exec_id) builds the unbounded history the analytics depend on.
 """
 from __future__ import annotations
 
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-
 from app.clients.ibkr import IBKRAuthError, IBKRClient, IBKRError
 from app.clients.ibkr.normalize import normalize_trade
 from app.core.logging import get_logger
 from app.core.state import broadcast_event, session_state
+from app.db import repo
 from app.db.base import AsyncSessionLocal
-from app.db.models import Execution
 
 log = get_logger("poller.trades")
 
@@ -45,13 +43,8 @@ async def poll_trades(client: IBKRClient) -> None:
     if not values:
         return
 
-    stmt = (
-        pg_insert(Execution)
-        .values(values)
-        .on_conflict_do_nothing(index_elements=["exec_id"])
-    )
     async with AsyncSessionLocal() as session:
-        result = await session.execute(stmt)
+        inserted = await repo.insert_poll_executions(session, values, account_id)
         await session.commit()
-    log.info("trades_polled", fetched=len(values), inserted=result.rowcount)
+    log.info("trades_polled", fetched=len(values), inserted=inserted)
     await broadcast_event("trades")
