@@ -90,6 +90,23 @@ class MarketOut(_ORM):
     source: str | None = None
 
 
+class MarketHistoryPointOut(BaseModel):
+    date: date
+    close: float | None = None
+    sma: float | None = None
+    sma200: float | None = None
+    vix: float | None = None
+
+
+class MarketHistoryOut(BaseModel):
+    conid: int
+    symbol: str | None = None
+    months: int
+    sma_window: int = 50
+    points: list[MarketHistoryPointOut] = []
+    market: MarketOut | None = None
+
+
 class SignalOut(_ORM):
     underlying_conid: int
     symbol: str | None = None

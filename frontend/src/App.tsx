@@ -13,7 +13,7 @@ import { DecayPanel } from "./components/DecayPanel";
 import { ProfitPanel } from "./components/ProfitPanel";
 import { RiskPanel } from "./components/RiskPanel";
 import { IncomePanel } from "./components/IncomePanel";
-import { PanelGrid } from "./components/PanelGrid";
+import { MarketContextPanel } from "./components/MarketContextPanel";
 
 export default function App() {
   const session = useSession();
@@ -56,12 +56,8 @@ export default function App() {
         <ProfitPanel selectedConid={selectedConid} onSelect={setSelectedConid} />
         <RiskPanel />
         <IncomePanel />
+        <MarketContextPanel />
       </div>
-
-      <h2 className="mb-3 mt-8 text-lg font-semibold text-slate-700 dark:text-slate-300">
-        Analytics <span className="text-sm font-normal text-slate-400 dark:text-slate-500">— coming next</span>
-      </h2>
-      <PanelGrid />
 
       {meta?.disclaimer && (
         <footer className="mt-8 border-t border-slate-200 pt-4 text-xs text-slate-400 dark:border-slate-700 dark:text-slate-500">

@@ -12,6 +12,18 @@ const fmtMoney = (v: number) => "$" + v.toLocaleString(undefined, { maximumFract
 const posLabel = (p: Position) =>
   `${p.symbol ?? "—"}${p.strike != null ? ` ${p.strike}` : ""}${p.right ?? ""}`;
 
+const isChartable = (p: Position) => (p.decay_curve?.length ?? 0) > 1;
+
+// Why a position can't be charted — surfaced on a muted chip / empty state instead
+// of silently dropping it, so every open option stays visible with an explanation.
+function decayReason(p: Position): string {
+  if (p.right == null || p.strike == null) return "not an option leg";
+  if (p.underlying_price == null) return `waiting for ${p.symbol ?? "the underlying"}'s spot price`;
+  if (p.iv == null) return "no implied vol from the feed yet";
+  if (p.dte == null || p.dte <= 0) return "expires today — no time value left to model";
+  return "not modelable right now";
+}
+
 /**
  * Dedicated time-value decay panel. Reads the shared ["positions"] query (so it
  * costs no extra fetch) and charts the decay curve of whichever position is
@@ -30,8 +42,11 @@ export function DecayPanel({
     queryFn: () => getJSON<Position[]>("/api/positions"),
   });
 
-  const chartable = (positions ?? []).filter((p) => (p.decay_curve?.length ?? 0) > 1);
-  const active = chartable.find((p) => p.conid === selectedConid) ?? chartable[0] ?? null;
+  const all = positions ?? [];
+  const chartable = all.filter(isChartable);
+  // Prefer the user's selection; otherwise default to a chartable position so the
+  // panel opens on a real curve, but never hide the non-chartable ones.
+  const active = all.find((p) => p.conid === selectedConid) ?? chartable[0] ?? all[0] ?? null;
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -41,31 +56,41 @@ export function DecayPanel({
         position above — or below — to chart it.
       </p>
 
-      {chartable.length === 0 ? (
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          No position has a modelable curve yet — a curve needs strike, spot, IV and a future expiry.
-        </p>
+      {all.length === 0 ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">No open option positions.</p>
       ) : (
         <>
           <div className="mb-4 flex flex-wrap gap-1.5">
-            {chartable.map((p) => {
+            {all.map((p) => {
               const on = active?.conid === p.conid;
+              const ok = isChartable(p);
               return (
                 <button
                   key={p.conid}
                   onClick={() => onSelect(p.conid)}
+                  title={ok ? undefined : `Can’t chart — ${decayReason(p)}`}
                   className={`rounded-full px-2.5 py-1 text-[11px] font-medium tabular-nums transition-colors ${
                     on
                       ? "bg-emerald-600 text-white dark:bg-emerald-500"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                      : ok
+                        ? "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                        : "border border-dashed border-slate-300 bg-transparent text-slate-400 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-500 dark:hover:bg-slate-800"
                   }`}
                 >
                   {posLabel(p)}
+                  {!ok && <span className="ml-1 opacity-70">⚠</span>}
                 </button>
               );
             })}
           </div>
-          {active && <DecayChart key={active.conid} p={active} />}
+          {active && isChartable(active) ? (
+            <DecayChart key={active.conid} p={active} />
+          ) : active ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/30 dark:text-slate-400">
+              <span className="font-medium text-slate-600 dark:text-slate-300">{posLabel(active)}</span> can’t be
+              charted — {decayReason(active)}.
+            </div>
+          ) : null}
         </>
       )}
     </section>
