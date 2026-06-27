@@ -47,6 +47,8 @@ export interface Position {
   underlying_price: number | null;
   premium_captured_pct: number | null;
   cushion_pct: number | null;
+  breakeven: number | null;
+  breakeven_cushion_pct: number | null;
   intrinsic_value: number | null;
   extrinsic_value: number | null;
   decay_curve: DecayPoint[] | null;

@@ -33,6 +33,28 @@ def test_enrich_short_put():
     # current_cost = 2.0 * 100 = 200. (500 - 200) / 500 = 300 / 500 = 0.6
     assert out.premium_captured_pct == 0.6
     assert out.status == "OPEN"
+    # break-even = strike - premium/share = 400 - 5.00 = 395
+    assert out.breakeven == 395.0
+    # BE cushion = (450 - 395) / 450 = 55 / 450 = 0.1222...; wider than the
+    # raw strike cushion (0.1111) because the collected premium extends the buffer.
+    assert round(out.breakeven_cushion_pct, 4) == 0.1222
+    assert out.breakeven_cushion_pct > out.cushion_pct
+
+
+def test_enrich_breakeven_cushion_short_call():
+    today = datetime.now(timezone.utc).date()
+    p = PositionSnapshot(
+        conid=9, symbol="QQQ", sec_type="OPT", right="C", strike=500.0,
+        expiry=today + timedelta(days=10), position=-1.0,
+        avg_cost=300.0,  # $3.00/share premium collected
+        mark=1.0,
+    )
+    m = MarketSnapshot(symbol="QQQ", price=490.0)
+    out = enrich_positions([p], [m], {})[0]
+    # call break-even = strike + premium/share = 500 + 3 = 503
+    assert out.breakeven == 503.0
+    # BE cushion = (503 - 490) / 490 = 13 / 490 = 0.0265
+    assert round(out.breakeven_cushion_pct, 4) == 0.0265
 
 
 def test_enrich_short_call_itm():

@@ -121,7 +121,7 @@ export function PositionsPanel({
               <th className="pr-3 text-right" title="Your average entry price per share (avg cost / 100).">My Avg</th>
               <th className="pr-3 text-right" title="In-the-money value: total $ across all contracts (per-share intrinsic x 100 x |qty|). Needs the spot price.">Intrinsic ($)</th>
               <th className="pr-3 text-right" title="Time value remaining: total $ across all contracts (mark - intrinsic, x 100 x |qty|). This is what decays to zero by expiry.">Extrinsic ($)</th>
-              <th className="pr-3 text-right" title="Distance from spot to strike. Put: (spot - strike) / spot. Call: (strike - spot) / spot. Measures room before the strike - independent of P&L.">Cushion</th>
+              <th className="pr-3 text-right" title="Distance from spot to strike. Put: (spot - strike) / spot. Call: (strike - spot) / spot. Measures room before the strike - independent of P&L. The smaller 'BE' line is the cushion to your break-even (strike ∓ premium collected) - the real buffer before a loss.">Cushion</th>
               <th className="pr-3 text-right" title="% of the premium you've captured so far: (credit received - cost to buy back) / credit received.">Captured</th>
               <th className="pr-3 text-right" title="Unrealized profit/loss on the position, in account currency.">Unreal P&amp;L</th>
               <th className="pr-3 text-right" title="Delta - per-share price sensitivity to a $1 move in the underlying.">Δ</th>
@@ -476,7 +476,17 @@ function PositionRow({ p, selected, onSelect }: { p: Position; selected: boolean
       <td className="pr-3 text-right tabular-nums dark:text-slate-300">{num(myAvg)}</td>
       <td className="pr-3 text-right tabular-nums dark:text-slate-300">{money(intrinsicMoney)}</td>
       <td className="pr-3 text-right tabular-nums dark:text-slate-300">{money(extrinsicMoney)}</td>
-      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{percent(p.cushion_pct)}</td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">
+        <div>{percent(p.cushion_pct)}</div>
+        {p.breakeven_cushion_pct != null && (
+          <div
+            className="text-[10px] text-slate-400 dark:text-slate-500"
+            title={`Break-even cushion: distance from spot to break-even (${p.right === "C" ? "strike + premium" : "strike − premium"}${p.breakeven != null ? ` = ${p.breakeven.toFixed(2)}` : ""}). The real buffer before the trade turns into a loss, since you keep the premium.`}
+          >
+            BE {percent(p.breakeven_cushion_pct)}
+          </div>
+        )}
+      </td>
       <td className="pr-3 text-right tabular-nums dark:text-slate-300">{percent(p.premium_captured_pct)}</td>
       <td
         className={`pr-3 text-right tabular-nums ${

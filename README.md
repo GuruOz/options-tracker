@@ -69,6 +69,37 @@ docker compose --profile redis up --build   # and set REDIS_URL in .env
 
 ---
 
+## Network access (LAN / homelab)
+
+By default only `frontend` publishes a port, bound to **loopback** (`127.0.0.1`),
+so the dashboard is reachable only from the machine running it. To reach it from
+other devices on your network, set the bind interface in `.env`:
+
+```bash
+APP_BIND=0.0.0.0     # publish on all interfaces
+APP_PORT=8080
+docker compose up -d frontend   # apply (frontend-only; does NOT log IBKR out)
+```
+
+Then browse to **`http://<server-lan-ip>:8080`** from any device on the LAN
+(find the IP with `ip addr` / `ipconfig`). Nothing else needs to change — nginx
+already accepts any host and proxies `/api` + `/ws` same-origin, so the live
+WebSocket works cross-device.
+
+> ⚠️ **There is no built-in login.** Anyone who can reach the port can view your
+> positions/P&L and trigger an IBKR login (a 2FA push to your phone). So:
+> - Only bind `0.0.0.0` on a **trusted** home LAN.
+> - For access **away from home**, use a VPN or **Tailscale/WireGuard** — do
+>   **not** port-forward this to the public internet.
+> - To add real auth, put a reverse proxy with HTTP basic-auth / an identity
+>   proxy (e.g. Caddy, Authelia) in front of the frontend port.
+
+Firewall: allow inbound TCP on `APP_PORT` (8080) on the server. The gateway,
+backend, db, and backups stay on the private Docker network and are never
+published.
+
+---
+
 ## IBKR session behaviour
 
 **Only one IBKR brokerage (iServer) session can be active at a time**, so a
