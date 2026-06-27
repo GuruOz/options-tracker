@@ -18,6 +18,28 @@ const monthLabel = (mk: string) => {
   return `${MONTHS[Number(m) - 1] ?? m} ${y}`;
 };
 
+/**
+ * Fill a continuous month axis between the first and last month present, so the
+ * bar chart reads as an unbroken timeline (zero-activity months show an empty
+ * slot) instead of silently collapsing the gaps.
+ */
+function densifyMonths(months: IncomeMonth[]): IncomeMonth[] {
+  if (months.length === 0) return months;
+  const sorted = [...months].sort((a, b) => a.month.localeCompare(b.month));
+  const byKey = new Map(sorted.map((m) => [m.month, m]));
+  let [y, mo] = sorted[0].month.split("-").map(Number);
+  const [ly, lm] = sorted[sorted.length - 1].month.split("-").map(Number);
+  const out: IncomeMonth[] = [];
+  while (y < ly || (y === ly && mo <= lm)) {
+    const key = `${y}-${String(mo).padStart(2, "0")}`;
+    out.push(
+      byKey.get(key) ?? { month: key, pnl: 0, chain_count: 0, cashed_out: false, withdrawal: null, note: null }
+    );
+    if (++mo > 12) { mo = 1; y++; }
+  }
+  return out;
+}
+
 function Stat({
   label,
   value,
@@ -218,7 +240,7 @@ export function IncomePanel() {
       </div>
 
       <div className="mt-4">
-        <MonthlyBars months={data.months} />
+        <MonthlyBars months={densifyMonths(data.months)} />
       </div>
 
       {data.years.length > 0 && (
