@@ -120,6 +120,24 @@ All cleared 2026-06-21. Unit target decided with the user: **keep dollars, commi
 - [x] Frontend time-series chart of composite score from `signal_history` — per-underlying sparkline in `SignalPanel.tsx` (`ScoreHistory`), with FAVORABLE (66) / SELECTIVE (45) guide lines, fed by the existing `/api/signal/history` endpoint; `["signal","history"]` invalidated on market/signals pushes. (2026-06-21)
 - [ ] Simple backtest view replaying persisted scores against outcomes.
 
+### 5. Remote access & authentication  _(2026-06-28 — needed before "access from anywhere")_
+
+Clarification of current behaviour (asked 2026-06-28): the `APP_BIND=0.0.0.0` change only exposes the
+dashboard on the **local network**, and only on the machine where it's set — `.env` is git-ignored, so a
+clone on another host starts from `.env.example`'s loopback default and must opt in again; the access URL is
+that host's own LAN IP. **Accessing "from anywhere" is NOT automatic and is intentionally unsupported today**
+because the app has **no authentication** — anyone who can reach the port sees live brokerage data and can
+trigger an IBKR 2FA login.
+
+- [ ] **Document the recommended remote path: Tailscale/WireGuard** (private overlay network; reach the homelab
+      IP from any device with nothing exposed publicly). Add a short README "Remote access" subsection. *Lowest
+      effort, safest — likely the right answer for a single user; consider before building app-level auth.*
+- [ ] **Optional app-level authentication** for users who must expose it via a reverse proxy: pick an approach
+      (a) front it with Caddy/Authelia/Traefik basic-auth + TLS (no app code), or (b) build a minimal
+      login/session layer into the backend + nginx. Decide before ever recommending a public port-forward.
+- [ ] **Per-machine deploy note** — make the README "Network access" / "Quick start" call out explicitly that
+      each deployment needs its own `.env` (set `APP_BIND` there) and uses its own LAN IP.
+
 ### 4. Profit/loss projection panel  _(broker-style what-if grid)_ — ✅ done 2026-06-22
 - [x] **`ProfitPanel.tsx` + `lib/options.ts` (2026-06-22)** — user-requested P&L "what-if" matrix like the tastytrade/OptionStrat grid. Per **selected position** (reuses the shared `selectedConid` that also drives the decay panel; has its own position chips). Pure **client-side** compute (`lib/options.ts`: Black–Scholes `bsPrice`/`normCdf`/`intrinsic`/`normalizeIv` + an `impliedVol` bisection solver) so the controls recompute instantly with no endpoint. Grid: rows = underlying price (high→low, "nice" round steps), columns = dates today→expiry (+ "Exp"), cells = color-coded $ P&L (green/red, intensity ∝ |P&L|), right-hand +/-% column, current-spot row highlighted, click a cell for an exit readout. **Full controls**: IV-change select (±%), Grid/Curve toggle, $ P/L vs % return, editable price range. Also a **line risk-graph** (Curve view): T+0 (solid) vs expiry (dashed) payoff, profit/loss shading via clipPaths, breakeven + spot markers, hover readout. P&L basis = `qty × (value×100 − avg_cost)` (sign verified against enrichment's `premium_captured` formula). Calibrates to the live mark via implied vol so "today @ spot" ≈ real unrealized P&L; falls back to quoted IV with an amber caveat when mark ≤ intrinsic. `tsc` + `vite build` clean (92 modules). NOTE: single-position basis — rolled chains aren't combined (deferred). Live numeric cross-check pending (IBKR session/positions feed was empty at build time).
 

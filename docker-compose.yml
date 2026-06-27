@@ -136,8 +136,9 @@ services:
       backend:
         condition: service_started
     ports:
-      # The ONLY host-published port. Loopback-only by default.
-      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:80"
+      # The ONLY host-published port. Binds all interfaces by default (LAN-
+      # reachable); set APP_BIND=127.0.0.1 in .env to restrict to localhost.
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8080}:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1"]
       interval: 15s
