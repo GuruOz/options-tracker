@@ -9,6 +9,8 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
+from app.db.migration_utils import has_table
+
 
 revision: str = "0006_income_adjustments"
 down_revision: Union[str, None] = "0005_roll_chain_redesign"
@@ -17,6 +19,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    if has_table("income_adjustments"):
+        return  # baseline create_all already made it (fresh database)
     op.create_table(
         "income_adjustments",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
