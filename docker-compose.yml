@@ -68,8 +68,13 @@ services:
       # Widen the gateway's IP allowlist to the Compose network, otherwise it
       # returns "Access Denied" to the backend. Single-file mount (safe).
       - ./gateway/conf.yaml:/srv/clientportal.gw/root/conf.yaml
-      # Mount outputs to access login failure screenshots for debugging.
-      - ./gateway/outputs:/srv/outputs
+      # IBEAM writes its log + debug screenshots here on every boot. Use a named
+      # volume (NOT a host bind mount): on a fresh clone the bind-mount dir is
+      # created root-owned, and the non-root gateway user can't write to it, which
+      # crashes the container at startup (PermissionError on ibeam_log...). A named
+      # volume is initialized writable for the container user. Retrieve files with:
+      #   docker compose cp ibkr-gateway:/srv/outputs ./gateway-outputs
+      - gateway-outputs:/srv/outputs
     healthcheck:
       # Image is Python-based; just confirm the gateway port is accepting TCP.
       test: ["CMD-SHELL", "python -c \"import socket;socket.create_connection(('127.0.0.1',5000),3)\""]
@@ -196,6 +201,7 @@ services:
 
 volumes:
   pgdata:
+  gateway-outputs:
 
 networks:
   internal:

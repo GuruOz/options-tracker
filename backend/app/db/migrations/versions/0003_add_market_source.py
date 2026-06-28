@@ -9,6 +9,8 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
+from app.db.migration_utils import has_column
+
 
 revision: str = "0003_add_market_source"
 down_revision: Union[str, None] = "0002_widen_symbol"
@@ -17,11 +19,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "market_snapshots",
-        sa.Column("source", sa.String(16), nullable=True),
-    )
+    # Skip if the baseline create_all already added it (fresh database).
+    if not has_column("market_snapshots", "source"):
+        op.add_column(
+            "market_snapshots",
+            sa.Column("source", sa.String(16), nullable=True),
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("market_snapshots", "source")
+    if has_column("market_snapshots", "source"):
+        op.drop_column("market_snapshots", "source")
