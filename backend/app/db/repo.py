@@ -385,6 +385,17 @@ def _exec_strike(exec_obj) -> float | None:
     return parse_occ_symbol(exec_obj.symbol)["strike"]
 
 
+def _exec_expiry(exec_obj) -> str | None:
+    """ISO expiry of an execution, recovered from the OSI symbol when the
+    explicit column is null (feeds often omit it)."""
+    if exec_obj is None:
+        return None
+    if exec_obj.expiry is not None:
+        return exec_obj.expiry.isoformat()
+    d = parse_occ_symbol(exec_obj.symbol)["expiry"]
+    return d.isoformat() if d else None
+
+
 def _exec_right(exec_obj) -> str | None:
     """Right (P/C) of an execution, recovered from the OSI symbol when null."""
     if exec_obj is None:
@@ -461,6 +472,7 @@ async def roll_chain_summaries(
                     "date": leg.created_at.isoformat() if leg.created_at else None,
                     "action": "B" if buy else "S",
                     "strike": strike,
+                    "expiry": None,
                     "price": float(strike or 0.0),
                     "credit": -value if buy else value,
                     "qty": shares,
@@ -476,6 +488,7 @@ async def roll_chain_summaries(
                 ),
                 "action": (e.side if e else None),
                 "strike": _exec_strike(e),
+                "expiry": _exec_expiry(e),
                 "price": (float(e.price) if e and e.price is not None else 0.0),
                 "credit": (_credit(e) if e else 0.0),
                 "qty": (float(e.qty) if e and e.qty is not None else None),

@@ -193,6 +193,7 @@ export interface RollChainLeg {
   date: string | null;
   action: string | null;
   strike: number | null;
+  expiry: string | null;
   price: number;
   credit: number;
   qty?: number | null;

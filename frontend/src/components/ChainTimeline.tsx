@@ -48,6 +48,12 @@ const ROLE: Record<string, RolePresentation> = {
 const fmtDate = (d: string | null) =>
   d ? new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—";
 
+const fmtExpiry = (d: string | null) =>
+  d ? new Date(d + "T00:00:00").toLocaleDateString(undefined,
+      { month: "short", day: "numeric", year: "2-digit" }) : null;
+
+const STOCK_ROLES = new Set(["assignment_stock", "stock_close"]);
+
 export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onClose: () => void }) {
   if (!chain) return null;
 
@@ -116,6 +122,16 @@ export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onC
                 </div>
                 <div className="mt-0.5 flex items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
                   <span>
+                    {!STOCK_ROLES.has(leg.role) && leg.strike != null && (
+                      <span className="mr-2 font-mono text-slate-700 dark:text-slate-300">
+                        {leg.strike}{chain.right ?? ""}
+                        {fmtExpiry(leg.expiry) && (
+                          <span className="ml-1 font-sans text-slate-400 dark:text-slate-500">
+                            · exp {fmtExpiry(leg.expiry)}
+                          </span>
+                        )}
+                      </span>
+                    )}
                     {leg.action ? `${leg.action === "S" ? "Sell" : leg.action === "B" ? "Buy" : leg.action} ` : ""}
                     {leg.qty != null ? `${leg.qty} ` : ""}
                     {leg.price ? `@ ${leg.price.toFixed(2)}` : ""}
