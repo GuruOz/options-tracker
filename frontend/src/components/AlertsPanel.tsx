@@ -103,7 +103,11 @@ export function AlertsPanel() {
   // Chains holding stock from an assignment surface as their own alert until the
   // shares are sold (the chain closes) — that's the correct "action" lifetime.
   const assigned = (chains ?? []).filter(isAssignedOpenChain);
-  const count = alerts.length + assigned.length;
+  
+  const assignedChainIds = new Set(assigned.map((c) => c.chain_id));
+  const standaloneAlerts = alerts.filter((p) => p.chain_id == null || !assignedChainIds.has(p.chain_id));
+  
+  const count = standaloneAlerts.length + assigned.length;
 
   if (count === 0) {
     return null; // Hide panel completely if there are no alerts to keep UI clean
@@ -121,7 +125,7 @@ export function AlertsPanel() {
         {assigned.map((c) => (
           <AssignmentAlert key={c.chain_id} chain={c} onOpen={() => setTimelineChain(c)} />
         ))}
-        {alerts.map((p) => (
+        {standaloneAlerts.map((p) => (
           <AlertItem key={p.conid} position={p} />
         ))}
       </div>

@@ -4,7 +4,7 @@ import { getJSON } from "../api/client";
 import type { Position, RollChain, Trade } from "../api/types";
 // `chainLabel` ("NVDA 216P") and `money` live in ./ChainTimeline so the timeline
 // and alerts panel can share the same formatting.
-import { ChainTimeline, money, chainLabel } from "./ChainTimeline";
+import { ChainTimeline, money, chainLabel, isAssignedOpenChain } from "./ChainTimeline";
 
 const num = (v: number | null, d = 2) => (v == null ? "—" : v.toFixed(d));
 const percent = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
@@ -328,9 +328,7 @@ function ChainGroup({
 }) {
   const [linking, setLinking] = useState(false);
   const queryClient = useQueryClient();
-  const assigned = (chain?.legs ?? []).some(
-    (l) => l.role === "assignment" || l.role === "assignment_stock",
-  );
+  const assigned = chain ? isAssignedOpenChain(chain) : false;
 
   const { data: allChains } = useQuery({
     queryKey: ["chains", "all"],
