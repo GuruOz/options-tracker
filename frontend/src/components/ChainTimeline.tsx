@@ -23,9 +23,21 @@ export const chainLabel = (c: RollChain) => {
 
 // A chain that holds shares from an assignment and hasn't been sold out yet —
 // i.e. the user was put the stock and still owns it. Used to raise the alert.
-export const isAssignedOpenChain = (c: RollChain) =>
-  c.status === "open" &&
-  (c.legs ?? []).some((l) => l.role === "assignment" || l.role === "assignment_stock");
+export const isAssignedOpenChain = (c: RollChain) => {
+  if (c.status !== "open") return false;
+  let stockPos = 0;
+  let hasAssignment = false;
+  for (const l of c.legs ?? []) {
+    if (l.role === "assignment" || l.role === "assignment_stock") {
+      hasAssignment = true;
+    }
+    if (l.role === "assignment_stock" || l.role === "stock_close") {
+      const dir = l.action === "B" ? 1 : l.action === "S" ? -1 : 0;
+      stockPos += dir * (l.qty || 0);
+    }
+  }
+  return hasAssignment && Math.abs(stockPos) > 0.1;
+};
 
 // Each leg role gets an icon, a human label and a color so the timeline reads as
 // a story rather than a table. Mirrors the leg roles produced by rolls.py.
