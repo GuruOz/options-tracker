@@ -225,6 +225,22 @@ class RollChain(Base):
     opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cumulative_credit: Mapped[float | None] = mapped_column(Money)
+    # Cycle economics for a rolled short. A roll doesn't bank the new leg's
+    # credit — it only banks the decay on the leg it replaces — so the numbers
+    # the cockpit reports have to separate what's realized from what's still
+    # riding on the open leg. See `analytics/rolls.py` for how they're kept.
+    #   open_credit        sell credit of the short leg open right now (0 if flat)
+    #   initial_credit     the sale that started this cycle — the premium the
+    #                      whole cycle is working toward
+    #   cycle_base_credit  cumulative_credit as of the cycle's start, so an
+    #                      earlier cycle's P&L doesn't count toward this one
+    open_credit: Mapped[float | None] = mapped_column(
+        Money, default=0.0, server_default="0"
+    )
+    initial_credit: Mapped[float | None] = mapped_column(Money)
+    cycle_base_credit: Mapped[float | None] = mapped_column(
+        Money, default=0.0, server_default="0"
+    )
     meta: Mapped[dict | None] = mapped_column(JSONB)
 
 

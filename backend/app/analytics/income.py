@@ -6,8 +6,13 @@ function over ORM-ish rows so it's unit-testable with plain fixtures.
 
 A chain's `cumulative_credit` is its commission-net realized P&L (dollars). P&L
 is attributed to the month the chain was *opened* (matching the Excel tabs).
-Open chains contribute their running credit as unrealized; closed chains are
-realized and drive the win rate.
+Closed chains are realized and drive the win rate.
+
+An open chain contributes only what it has *banked* — its credit less the
+`open_credit` still riding on the short leg that's open. That leg's premium
+isn't income yet: it can only be collected once the option expires worthless or
+is bought back, and until then a roll has merely extended the trade. Counting it
+would book premium that is still at risk.
 """
 from __future__ import annotations
 
@@ -27,7 +32,8 @@ def compute_income(
 ) -> dict:
     """Build the income summary.
 
-    chains: rows with .opened_at (datetime|None), .status (str), .cumulative_credit.
+    chains: rows with .opened_at (datetime|None), .status (str),
+        .cumulative_credit and .open_credit.
     adjustments: rows with .month (date), .cashed_out, .withdrawal_amount, .note.
     """
     monthly_pnl: dict[str, float] = defaultdict(float)
@@ -47,6 +53,9 @@ def compute_income(
             if credit > 0:
                 wins += 1
         else:
+            # Only the banked part of an open chain counts — the credit locked in
+            # its open leg isn't collectable yet.
+            credit -= float(getattr(c, "open_credit", 0) or 0)
             open_ += 1
             unrealized += credit
 
