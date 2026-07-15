@@ -9,6 +9,10 @@ from app.db.models import ChainAdjustment, Execution
 
 _T0 = datetime(2026, 1, 5, 15, 0, tzinfo=timezone.utc)
 _ACCT = "U123"
+# An expiry that is always still ahead of "now": the builder closes any short
+# whose expiry has passed, so a test that wants a chain left OPEN can't pin the
+# open leg to a fixed calendar date — it would start failing once that date rolls by.
+_FUTURE_EXPIRY = (datetime.now(timezone.utc) + timedelta(days=45)).date()
 
 def _ex(exec_id, side, conid, *, symbol="QQQ", right="P", strike=100.0,
         t=_T0, qty=1.0, price=1.0, comm=1.0, sec_type="OPT", expiry=None,
@@ -191,7 +195,7 @@ def test_same_day_cross_strike_roll_is_one_chain():
         _ex("btc", "B", 101, symbol="NVDA 260618P00216000", strike=216.0,
             right="P", price=6.33, t=_T0 + timedelta(days=13), expiry=date(2026, 6, 18)),
         _ex("sto", "S", 102, symbol="NVDA 260702P00215000", strike=215.0,
-            right="P", price=8.65, t=_T0 + timedelta(days=13), expiry=date(2026, 7, 2)),
+            right="P", price=8.65, t=_T0 + timedelta(days=13), expiry=_FUTURE_EXPIRY),
     ]
     chains, legs = build_roll_chains(exs, _ACCT)
     assert len(chains) == 1, "same-day cross-strike roll must be one chain"
@@ -353,6 +357,218 @@ def test_dual_feed_assignment_does_not_spawn_phantom_chain():
     roles = [l["role"] for l in legs]
     assert roles.count("assignment") == 1
     assert roles.count("assignment_stock") == 1
+
+
+# --- Cycle economics: what's locked vs. what's banked ---------------------
+# A roll swaps one open leg for another: it banks only the decay on the leg it
+# replaced and leaves the cycle's premium target alone. A sell that *isn't* a
+# roll starts a fresh cycle with its own target.
+
+
+def test_single_sell_locks_its_whole_credit():
+    chains, _ = build_roll_chains([_ex("e1", "S", 100, price=2.0, expiry=_FUTURE_EXPIRY)], _ACCT)
+    c = chains[0]
+    assert c["initial_credit"] == 199.0
+    assert c["open_credit"] == 199.0      # nothing banked — it's all still riding
+    assert c["cycle_base_credit"] == 0.0
+    assert c["cumulative_credit"] - c["open_credit"] == 0.0
+
+
+def test_same_strike_roll_banks_only_the_closed_legs_decay():
+    # The user's case: sell 6.95, buy it back at 6.33 and re-sell for 8.65 the
+    # same day. Banked = 695 - 633 = 62; the 8.65 is locked in the new leg and
+    # the target stays the original 695.
+    exs = [
+        _ex("o1", "S", 101, symbol="NVDA 260618P00216000", strike=216.0, price=6.95,
+            comm=0.0, t=_T0, expiry=date(2026, 6, 18)),
+        _ex("b1", "B", 101, symbol="NVDA 260618P00216000", strike=216.0, price=6.33,
+            comm=0.0, t=_T0 + timedelta(days=13), expiry=date(2026, 6, 18)),
+        _ex("s2", "S", 101, symbol="NVDA 260702P00216000", strike=216.0, price=8.65,
+            comm=0.0, t=_T0 + timedelta(days=13), expiry=_FUTURE_EXPIRY),
+    ]
+    chains, legs = build_roll_chains(exs, _ACCT)
+    assert len(chains) == 1
+    c = chains[0]
+    assert c["initial_credit"] == 695.0     # unchanged by the roll
+    assert c["open_credit"] == 865.0        # locked in the new leg
+    assert c["cycle_base_credit"] == 0.0
+    assert c["cumulative_credit"] - c["open_credit"] == 62.0  # banked
+    # A same-key roll reads as one continuous trade, not close + re-entry.
+    assert [l["role"] for l in legs] == ["open", "roll", "roll"]
+
+
+def test_expiry_leaves_everything_banked():
+    exs = [
+        _ex("o1", "S", 100, price=2.0, t=_T0, expiry=date(2026, 1, 10)),
+    ]
+    chains, _ = build_roll_chains(exs, _ACCT)
+    c = chains[0]
+    assert c["close_reason"] == "expired"
+    assert c["open_credit"] == 0.0  # nothing locked once it expires worthless
+    assert c["cumulative_credit"] - c["open_credit"] == 199.0
+
+
+def test_sell_after_expiry_starts_a_new_cycle():
+    # The old put expired worthless; the next sell is its own trade, with its own
+    # target, measured from the credit already banked.
+    exs = [
+        _ex("o1", "S", 100, price=2.0, comm=0.0, t=_T0, expiry=date(2026, 1, 10)),
+        _ex("o2", "S", 100, price=3.0, comm=0.0, t=_T0 + timedelta(days=20),
+            expiry=_FUTURE_EXPIRY),
+    ]
+    chains, legs = build_roll_chains(exs, _ACCT)
+    assert len(chains) == 1
+    c = chains[0]
+    assert c["initial_credit"] == 300.0      # the new sale, not the old one
+    assert c["cycle_base_credit"] == 200.0   # the expired put's premium is banked
+    assert c["open_credit"] == 300.0
+    assert [l["role"] for l in legs] == ["open", "expired", "open"]
+
+
+def test_buy_back_then_sell_days_later_is_not_a_roll():
+    # Bought back and left alone for weeks: the next sell is a new trade, so it
+    # resets the target rather than inheriting the old one.
+    exs = [
+        _ex("o1", "S", 100, price=2.0, comm=0.0, t=_T0),
+        _ex("b1", "B", 100, price=0.5, comm=0.0, t=_T0 + timedelta(days=10)),
+        _ex("o2", "S", 100, price=2.5, comm=0.0, t=_T0 + timedelta(days=30),
+            expiry=_FUTURE_EXPIRY),
+    ]
+    chains, legs = build_roll_chains(exs, _ACCT)
+    c = chains[0]
+    assert c["initial_credit"] == 250.0
+    assert c["cycle_base_credit"] == 150.0  # 200 - 50 banked on the first cycle
+    assert [l["role"] for l in legs] == ["open", "close", "open"]
+
+
+def test_cross_strike_roll_keeps_the_original_target():
+    exs = [
+        _ex("o1", "S", 101, symbol="NVDA 260618P00216000", strike=216.0,
+            right="P", price=6.95, comm=0.0, t=_T0, expiry=date(2026, 6, 18)),
+        _ex("btc", "B", 101, symbol="NVDA 260618P00216000", strike=216.0,
+            right="P", price=6.33, comm=0.0, t=_T0 + timedelta(days=13), expiry=date(2026, 6, 18)),
+        _ex("sto", "S", 102, symbol="NVDA 260702P00215000", strike=215.0,
+            right="P", price=8.65, comm=0.0, t=_T0 + timedelta(days=13), expiry=_FUTURE_EXPIRY),
+    ]
+    chains, _ = build_roll_chains(exs, _ACCT)
+    c = chains[0]
+    assert c["initial_credit"] == 695.0  # the 216 sale still sets the target
+    assert c["open_credit"] == 865.0
+    assert c["cumulative_credit"] - c["open_credit"] == 62.0
+
+
+def test_assignment_zeroes_locked_credit():
+    exs = [
+        _ex("o1", "S", 101, symbol="NVDA 260618P00216000", strike=216.0,
+            right="P", price=2.0, comm=0.0, t=_T0),
+        _ex("a1", "B", 999, symbol="NVDA", strike=None, right=None, price=216.0,
+            qty=100, comm=0.0, sec_type="STK", t=_T0 + timedelta(days=5), notes="A"),
+    ]
+    chains, _ = build_roll_chains(exs, _ACCT)
+    c = chains[0]
+    # The short is gone (the shares replaced it), so nothing is locked in a leg.
+    assert c["open_credit"] == 0.0
+
+
+def test_assignment_does_not_restart_the_cycle():
+    """The real NVDA trade, transcribed from live data: sold a 216P for 6.95,
+    rolled it to a 215P, got assigned, sold the shares at a loss and sold another
+    put — all one campaign, so the 6.95 stays the target it's working toward.
+
+    Getting this wrong reports the *newest* put's credit as the target, which
+    (with the assigned shares' cost still on the books when the cycle restarts)
+    reads as a ~988% capture and fires a bogus TAKE PROFIT.
+    """
+    def _opt(i, side, conid, strike, price, comm, day, expiry, notes=None):
+        return _ex(i, side, conid, symbol=f"NVDA  2607{day:02d}P00{int(strike)}000",
+                   strike=strike, right="P", price=price, comm=comm,
+                   t=datetime(2026, 6, day, 15, 0, tzinfo=timezone.utc), expiry=expiry,
+                   notes=notes)
+
+    exs = [
+        _opt("e1", "S", 101, 216.0, 6.95, 1.068357, 3, date(2026, 6, 18)),
+        _opt("e2", "B", 101, 216.0, 6.33, 0.698250, 16, date(2026, 6, 18)),
+        _opt("e3", "S", 102, 215.0, 8.65, 0.719359, 16, date(2026, 7, 2)),
+        # Assigned: the 215P is exercised and 100 shares are delivered at 215.
+        _ex("e4", "B", 999, symbol="NVDA", strike=None, right=None, price=215.0,
+            qty=100, comm=0.0, sec_type="STK",
+            t=datetime(2026, 6, 25, 15, 0, tzinfo=timezone.utc), notes="A"),
+        # Same day: sell another put and dump the shares at a loss.
+        _opt("e5", "S", 103, 215.0, 21.27, 0.705356, 29, _FUTURE_EXPIRY),
+        _ex("e6", "S", 999, symbol="NVDA", strike=None, right=None, price=194.25,
+            qty=100, comm=0.890212, sec_type="STK",
+            t=datetime(2026, 6, 29, 15, 0, tzinfo=timezone.utc)),
+    ]
+    chains, _ = build_roll_chains(exs, _ACCT)
+    assert len(chains) == 1
+    c = chains[0]
+
+    assert round(c["cumulative_credit"], 2) == 974.92  # ties out to the live row
+    assert round(c["initial_credit"], 2) == 693.93     # still the 6.95 sale
+    assert c["cycle_base_credit"] == 0.0               # one cycle throughout
+    assert round(c["open_credit"], 2) == 2126.29       # locked in the newest put
+
+    # Closing everything at a 5.2942 mark nets 445.50 — 64% of the 693.93 target,
+    # not the 75% the newest leg alone reports.
+    profit = c["cumulative_credit"] - c["cycle_base_credit"] - 5.2942 * 100
+    assert round(profit, 2) == 445.50
+    assert round(profit / c["initial_credit"], 3) == 0.642
+
+
+def test_sell_after_shares_are_gone_starts_a_new_cycle():
+    # Assigned, then the shares are sold and the chain settles. A put sold weeks
+    # later is a genuinely fresh trade, so it sets its own target measured from
+    # what the settled chain had banked.
+    exs = [
+        _ex("o1", "S", 101, symbol="NVDA 260618P00216000", strike=216.0,
+            right="P", price=2.0, comm=0.0, t=_T0),
+        _ex("a1", "B", 999, symbol="NVDA", strike=None, right=None, price=216.0,
+            qty=100, comm=0.0, sec_type="STK", t=_T0 + timedelta(days=5), notes="A"),
+        _ex("s1", "S", 999, symbol="NVDA", strike=None, right=None, price=220.0,
+            qty=100, comm=0.0, sec_type="STK", t=_T0 + timedelta(days=6)),
+        _ex("o2", "S", 102, symbol="NVDA 260718P00216000", strike=216.0,
+            right="P", price=3.0, comm=0.0, t=_T0 + timedelta(days=20),
+            expiry=_FUTURE_EXPIRY),
+    ]
+    chains, _ = build_roll_chains(exs, _ACCT)
+    assert len(chains) == 1
+    c = chains[0]
+    assert c["initial_credit"] == 300.0  # the new put's own target
+    # Banked by the settled campaign: 200 premium - 21600 + 22000 on the shares.
+    assert c["cycle_base_credit"] == 600.0
+    assert c["open_credit"] == 300.0
+
+
+def test_manual_close_banks_the_open_leg():
+    exs = [_ex("open1", "S", 100, price=2.0, t=_T0, expiry=_FUTURE_EXPIRY)]
+    adj = ChainAdjustment(
+        chain_id=_chain_id("open1"),
+        adjustment_type="manual_close",
+        close_date=_T0 + timedelta(days=3),
+        close_reason="manual_close",
+    )
+    chains, _ = build_roll_chains(exs, _ACCT, adjustments=[adj])
+    c = chains[0]
+    assert c["status"] == "closed"
+    assert c["open_credit"] == 0.0  # the trade is over; nothing still riding
+
+
+def test_manual_link_keeps_target_and_adopts_open_leg():
+    exs = [
+        _ex("e1", "S", 101, strike=216.0, price=2.0, comm=0.0, t=_T0),
+        _ex("e2", "B", 101, strike=216.0, price=0.5, comm=0.0, t=_T0 + timedelta(days=5)),
+        _ex("e3", "S", 102, strike=210.0, price=2.5, comm=0.0,
+            t=_T0 + timedelta(days=12), expiry=_FUTURE_EXPIRY),
+    ]
+    adj = ChainAdjustment(
+        chain_id=_chain_id("e1"), adjustment_type="manual_link", exec_id="e3"
+    )
+    chains, _ = build_roll_chains(exs, _ACCT, adjustments=[adj])
+    assert len(chains) == 1
+    c = chains[0]
+    assert c["initial_credit"] == 200.0  # the 216 sale the roll works toward
+    assert c["open_credit"] == 250.0     # locked in the linked-in 210 leg
+    assert c["cumulative_credit"] - c["open_credit"] == 150.0
 
 
 def test_manual_close_adjustment_forces_closed():

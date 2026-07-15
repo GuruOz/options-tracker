@@ -46,6 +46,12 @@ export interface Position {
   dte: number | null;
   underlying_price: number | null;
   premium_captured_pct: number | null;
+  // Chain-level capture for a position inside a roll chain: what unwinding the
+  // whole chain nets today, against the premium its cycle is working toward.
+  // Null when the position isn't part of a chain.
+  chain_captured_pct: number | null;
+  chain_profit_if_closed: number | null;
+  chain_initial_credit: number | null;
   cushion_pct: number | null;
   breakeven: number | null;
   breakeven_cushion_pct: number | null;
@@ -209,6 +215,13 @@ export interface RollChain {
   opened_at: string | null;
   closed_at: string | null;
   cumulative_credit: number | null;
+  // Credit locked in the short leg that's open right now (0 once flat), and the
+  // rest of the chain's credit, which is actually banked. A roll only realizes
+  // the decay on the leg it replaces, so `banked_credit` is what's collectable
+  // to date; the open leg's premium lands only if it expires or is bought back.
+  open_credit: number | null;
+  banked_credit: number | null;
+  initial_credit: number | null;
   leg_count: number;
   conids: number[];
   legs?: RollChainLeg[];
@@ -248,6 +261,9 @@ export interface Income {
   years: IncomeYear[];
   all_time: number;
   realized: number;
+  // Despite the name, this is what open chains have *banked* from rolling — the
+  // premium locked in their open legs is excluded. Named for the closed/open
+  // split it sits beside, not for mark-to-market.
   unrealized: number;
   win_rate: number | null;
   closed_count: number;

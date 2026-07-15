@@ -66,6 +66,22 @@ const fmtExpiry = (d: string | null) =>
 
 const STOCK_ROLES = new Set(["assignment_stock", "stock_close"]);
 
+// Headline credit for a chain. While a chain is open, the premium on its open leg
+// is locked — a roll only banks the decay on the leg it replaced — so an open
+// chain reports what it has banked, and a closed one its final total.
+// `banked_credit` is absent on rows written before the cycle fields existed;
+// falling back to the total keeps those readable until the next rebuild.
+export const chainHeadline = (c: RollChain) => {
+  const open = c.status === "open";
+  const banked = open ? c.banked_credit ?? c.cumulative_credit : c.cumulative_credit;
+  return {
+    value: banked,
+    label: open ? "banked to date" : "net total",
+    locked: open ? c.open_credit ?? 0 : 0,
+    ifWorthless: c.cumulative_credit,
+  };
+};
+
 export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onClose: () => void }) {
   if (!chain) return null;
 
@@ -77,7 +93,8 @@ export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onC
     return { leg, running };
   });
 
-  const net = chain.cumulative_credit;
+  const headline = chainHeadline(chain);
+  const net = headline.value;
 
   return (
     <div
@@ -116,7 +133,17 @@ export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onC
             >
               {money(net)}
             </div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-400">net to date</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-400">{headline.label}</div>
+            {headline.locked !== 0 && (
+              <div
+                className="mt-1 max-w-[15rem] text-[10px] leading-snug text-slate-400 dark:text-slate-500"
+                title="Rolling doesn't collect the new put's premium — it swaps one open leg for another. Only the decay on the leg you closed is banked; the open leg pays out when it expires worthless or you buy it back."
+              >
+                + {money(headline.locked)} locked in the open leg
+                <br />
+                {money(headline.ifWorthless)} if it expires worthless
+              </div>
+            )}
           </div>
         </div>
 

@@ -26,6 +26,11 @@ from app.db.models import (
 )
 
 
+def _f(v) -> float | None:
+    """Money columns read back as Decimal; the API speaks float."""
+    return float(v) if v is not None else None
+
+
 async def latest_positions(db: AsyncSession, account_id: str) -> list[PositionSnapshot]:
     """Rows from the most recent positions batch with a non-zero position."""
     max_ts = (
@@ -349,11 +354,22 @@ async def income_adjustments(db: AsyncSession, account_id: str) -> list:
     return list(rows.scalars().all())
 
 
-async def open_roll_chains(db: AsyncSession, account_id: str) -> dict[int, str]:
-    """Returns a dict mapping conid -> chain_id for all open roll chains."""
+async def open_roll_chains(db: AsyncSession, account_id: str) -> dict[int, dict]:
+    """conid -> its open chain's identity and cycle economics.
+
+    Carries the credit figures (not just the id) because a rolled position's
+    headline numbers are properties of the whole chain, not of the leg that
+    happens to be open — see `analytics/enrichment.py`.
+    """
     from app.db.models import RollChain, RollChainLeg
     rows = await db.execute(
-        select(RollChainLeg.conid, RollChain.chain_id)
+        select(
+            RollChainLeg.conid,
+            RollChain.chain_id,
+            RollChain.cumulative_credit,
+            RollChain.initial_credit,
+            RollChain.cycle_base_credit,
+        )
         .join(RollChain, RollChain.chain_id == RollChainLeg.chain_id)
         .where(
             RollChain.account_id == account_id,
@@ -361,7 +377,15 @@ async def open_roll_chains(db: AsyncSession, account_id: str) -> dict[int, str]:
             RollChainLeg.conid.is_not(None)
         )
     )
-    return {row.conid: row.chain_id for row in rows}
+    return {
+        row.conid: {
+            "chain_id": row.chain_id,
+            "cumulative_credit": _f(row.cumulative_credit),
+            "initial_credit": _f(row.initial_credit),
+            "cycle_base_credit": _f(row.cycle_base_credit) or 0.0,
+        }
+        for row in rows
+    }
 
 
 def _underlying_ticker(symbol: str | None) -> str | None:
@@ -494,6 +518,13 @@ async def roll_chain_summaries(
                 "qty": (float(e.qty) if e and e.qty is not None else None),
             })
 
+        # What's actually banked so far: a roll only realizes the decay on the leg
+        # it replaced, so the credit riding on the leg that's still open isn't
+        # money in hand until it expires worthless or gets bought back.
+        cumulative = _f(chain.cumulative_credit)
+        open_credit = _f(chain.open_credit) or 0.0
+        banked = None if cumulative is None else cumulative - open_credit
+
         result.append({
             "chain_id": chain.chain_id,
             "underlying_symbol": underlying,
@@ -503,7 +534,10 @@ async def roll_chain_summaries(
             "close_reason": chain.close_reason,
             "opened_at": chain.opened_at.isoformat() if chain.opened_at else None,
             "closed_at": chain.closed_at.isoformat() if chain.closed_at else None,
-            "cumulative_credit": float(chain.cumulative_credit) if chain.cumulative_credit is not None else None,
+            "cumulative_credit": cumulative,
+            "open_credit": open_credit,
+            "initial_credit": _f(chain.initial_credit),
+            "banked_credit": banked,
             "leg_count": len(leg_rows),
             "conids": [leg.conid for leg, _ in leg_rows if leg.conid is not None],
             "legs": leg_dicts,

@@ -37,6 +37,12 @@ class PositionOut(_ORM):
     dte: int | None = None
     underlying_price: float | None = None
     premium_captured_pct: float | None = None
+    # Chain-level view of the same question, for a position inside a roll chain:
+    # what unwinding the whole chain nets today, and how much of the premium the
+    # cycle is working toward that represents.
+    chain_captured_pct: float | None = None
+    chain_profit_if_closed: float | None = None
+    chain_initial_credit: float | None = None
     cushion_pct: float | None = None
     breakeven: float | None = None
     breakeven_cushion_pct: float | None = None

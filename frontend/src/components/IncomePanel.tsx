@@ -204,7 +204,7 @@ export function IncomePanel() {
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">Premium income</h2>
-        <span className="text-xs text-slate-400 dark:text-slate-500">commission-net · by trade-open month</span>
+        <span className="text-xs text-slate-400 dark:text-slate-500">banked · commission-net · by trade-open month</span>
       </div>
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -213,7 +213,7 @@ export function IncomePanel() {
           value={money(data.all_time, true)}
           sub={`${data.closed_count} closed · ${data.open_count} open`}
           tone={data.all_time >= 0 ? "good" : "bad"}
-          title="Commission-net P&L across every roll chain (realized + open running credit)."
+          title="Commission-net P&L across every roll chain: finished chains in full, plus what still-open chains have banked from rolling. Premium riding on an open leg is excluded until that leg expires worthless or you buy it back."
         />
         {latestYear && (
           <Stat
@@ -225,11 +225,11 @@ export function IncomePanel() {
           />
         )}
         <Stat
-          label="Realized / Open"
+          label="Finished / Open"
           value={money(data.realized, true)}
-          sub={`${money(data.unrealized, true)} unrealized`}
+          sub={`${money(data.unrealized, true)} banked on open chains`}
           tone={data.realized >= 0 ? "good" : "bad"}
-          title="Realized = closed chains. Unrealized = running credit on still-open chains."
+          title="First figure: chains that are done. Second: what open chains have banked from rolling so far — each roll banks only the decay on the leg it replaced, and the premium on the leg still open counts for nothing until it expires worthless or you close it."
         />
         <Stat
           label="Win rate"
@@ -267,7 +267,7 @@ export function IncomePanel() {
           <thead>
             <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700">
               <th className="py-1.5 pr-3">Month</th>
-              <th className="pr-3 text-right">P&amp;L</th>
+              <th className="pr-3 text-right" title="Banked P&amp;L of the chains opened this month. A chain that's still open contributes only what rolling has banked, not the premium locked in its open leg — so this can keep moving after the month ends.">P&amp;L</th>
               <th className="pr-3 text-right" title="Number of roll chains opened this month.">Chains</th>
               <th className="pr-3 text-center" title="Mark this month's income as moved out of the trading account.">Cashed out?</th>
               <th className="pr-3 text-right" title="Manual withdrawal amount for this month.">Withdrawal</th>

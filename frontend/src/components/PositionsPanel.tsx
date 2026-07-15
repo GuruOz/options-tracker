@@ -4,7 +4,7 @@ import { getJSON } from "../api/client";
 import type { Position, RollChain, Trade } from "../api/types";
 // `chainLabel` ("NVDA 216P") and `money` live in ./ChainTimeline so the timeline
 // and alerts panel can share the same formatting.
-import { ChainTimeline, money, chainLabel, isAssignedOpenChain } from "./ChainTimeline";
+import { ChainTimeline, money, chainLabel, chainHeadline, isAssignedOpenChain } from "./ChainTimeline";
 
 const num = (v: number | null, d = 2) => (v == null ? "—" : v.toFixed(d));
 const percent = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
@@ -113,7 +113,7 @@ export function PositionsPanel({
             <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700">
               <th className="py-2 pr-3" title="Underlying ticker. 🔗 marks a position that belongs to a roll chain.">Symbol</th>
               <th className="pr-3" title="Security type, plus the option right (P/C) and strike.">Type</th>
-              <th className="pr-3" title="Lifecycle pill: TAKE PROFIT (>=70% premium captured), AT RISK (cushion < 3%), EXPIRING (<=2 DTE), or WATCH (near a threshold: >=65% captured or cushion < 5%).">Status</th>
+              <th className="pr-3" title="Lifecycle pill: TAKE PROFIT (>=70% premium captured), AT RISK (cushion < 3%), EXPIRING (<=2 DTE), or WATCH (near a threshold: >=65% captured or cushion < 5%). For a position in a roll chain, capture is measured across the whole chain, not the current leg.">Status</th>
               <th className="pr-3 text-right" title="Days to expiration (calendar days until the contract expires).">DTE</th>
               <th className="pr-3 text-right" title="Signed contract quantity. Negative = short (sold).">Qty</th>
               <th className="pr-3 text-right" title="Current mark price of the option, per share.">Last</th>
@@ -122,7 +122,7 @@ export function PositionsPanel({
               <th className="pr-3 text-right" title="In-the-money value: total $ across all contracts (per-share intrinsic x 100 x |qty|). Needs the spot price.">Intrinsic ($)</th>
               <th className="pr-3 text-right" title="Time value remaining: total $ across all contracts (mark - intrinsic, x 100 x |qty|). This is what decays to zero by expiry.">Extrinsic ($)</th>
               <th className="pr-3 text-right" title="Distance from spot to strike. Put: (spot - strike) / spot. Call: (strike - spot) / spot. Measures room before the strike - independent of P&L. The smaller 'BE' line is the cushion to your break-even (strike ∓ premium collected) - the real buffer before a loss.">Cushion</th>
-              <th className="pr-3 text-right" title="% of the premium you've captured so far: (credit received - cost to buy back) / credit received.">Captured</th>
+              <th className="pr-3 text-right" title="For a rolled position: what closing the whole chain now nets, as a % of the premium the chain is working toward (its opening sale). The smaller 'leg' line is the same measure for the current leg alone — a roll re-sells a fatter premium, so the leg reads high long before the trade is done. Standalone positions show the leg figure only.">Captured</th>
               <th className="pr-3 text-right" title="Unrealized profit/loss on the position, in account currency.">Unreal P&amp;L</th>
               <th className="pr-3 text-right" title="Delta - per-share price sensitivity to a $1 move in the underlying.">Δ</th>
               <th className="text-right" title="Theta - estimated daily time decay, per share.">Θ</th>
@@ -378,11 +378,21 @@ function ChainGroup({
                   ⚠️ Assigned
                 </span>
               )}
-              {chain?.cumulative_credit != null && (
-                <span className={`font-semibold tabular-nums px-2 py-0.5 rounded-full ${chain.cumulative_credit >= 0 ? "bg-emerald-100/50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-red-100/50 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>
-                  {money(chain.cumulative_credit)} net
-                </span>
-              )}
+              {chain && chainHeadline(chain).value != null && (() => {
+                const h = chainHeadline(chain);
+                return (
+                  <span
+                    className={`font-semibold tabular-nums px-2 py-0.5 rounded-full ${(h.value ?? 0) >= 0 ? "bg-emerald-100/50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-red-100/50 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}
+                    title={
+                      h.locked !== 0
+                        ? `Banked so far from rolling. The ${money(h.locked)} premium on the open leg isn't collected until it expires worthless or you buy it back — ${money(h.ifWorthless)} total if it expires.`
+                        : "Final net credit for this chain."
+                    }
+                  >
+                    {money(h.value)} {h.locked !== 0 ? "banked" : "net"}
+                  </span>
+                );
+              })()}
               <span className="text-slate-400 dark:text-slate-500">{chain?.legs?.length ?? positions.length} leg{(chain?.legs?.length ?? positions.length) !== 1 ? "s" : ""}</span>
             </div>
             <div onClick={(e) => e.stopPropagation()}>
@@ -485,7 +495,25 @@ function PositionRow({ p, selected, onSelect }: { p: Position; selected: boolean
           </div>
         )}
       </td>
-      <td className="pr-3 text-right tabular-nums dark:text-slate-300">{percent(p.premium_captured_pct)}</td>
+      <td className="pr-3 text-right tabular-nums dark:text-slate-300">
+        {p.chain_captured_pct != null ? (
+          <>
+            <div
+              title={`Whole chain: closing everything now nets ${money(p.chain_profit_if_closed)} of the ${money(p.chain_initial_credit)} premium this cycle is working toward. This is what the status pill judges — rolling re-sells a bigger premium, so the current leg alone reads far too optimistic.`}
+            >
+              {percent(p.chain_captured_pct)}
+            </div>
+            <div
+              className="text-[10px] text-slate-400 dark:text-slate-500"
+              title="This leg on its own: (credit received − cost to buy it back) / credit received. Useful for timing the next roll, not for judging the trade."
+            >
+              leg {percent(p.premium_captured_pct)}
+            </div>
+          </>
+        ) : (
+          percent(p.premium_captured_pct)
+        )}
+      </td>
       <td
         className={`pr-3 text-right tabular-nums ${
           (p.unrealized_pnl ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"

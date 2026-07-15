@@ -96,6 +96,9 @@ async def build_rolls(client: IBKRClient) -> None:  # noqa: ARG001 — client ke
                         "closed_at": c["closed_at"],
                         "close_reason": c["close_reason"],
                         "cumulative_credit": c["cumulative_credit"],
+                        "open_credit": c["open_credit"],
+                        "initial_credit": c["initial_credit"],
+                        "cycle_base_credit": c["cycle_base_credit"],
                     },
                 )
             )

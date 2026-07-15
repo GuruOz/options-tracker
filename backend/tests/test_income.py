@@ -5,11 +5,12 @@ from types import SimpleNamespace
 from app.analytics.income import compute_income
 
 
-def _chain(opened, status, credit):
+def _chain(opened, status, credit, open_credit=0.0):
     return SimpleNamespace(
         opened_at=datetime(opened[0], opened[1], opened[2], tzinfo=timezone.utc),
         status=status,
         cumulative_credit=credit,
+        open_credit=open_credit,
     )
 
 
@@ -81,6 +82,27 @@ def test_withdrawals_and_remaining():
     assert year["ytd"] == 1000.0
     assert year["withdrawn"] == 235.0
     assert year["remaining"] == 765.0
+
+
+def test_open_chain_counts_only_what_it_banked():
+    # The open leg was sold for 865 and the chain has 927 of credit, but only the
+    # 62 of roll decay is collectable — the 865 rides until it expires or is
+    # bought back, so income must not book it.
+    chains = [_chain((2026, 3, 2), "open", 927.0, open_credit=865.0)]
+    out = compute_income(chains, [])
+
+    assert out["unrealized"] == 62.0
+    assert out["all_time"] == 62.0
+    by_month = {m["month"]: m for m in out["months"]}
+    assert by_month["2026-03"]["pnl"] == 62.0
+
+
+def test_closed_chain_books_its_full_credit():
+    # Once the chain is closed nothing is locked, so the whole credit counts.
+    chains = [_chain((2026, 3, 2), "closed", 927.0, open_credit=0.0)]
+    out = compute_income(chains, [])
+    assert out["realized"] == 927.0
+    assert out["unrealized"] == 0.0
 
 
 def test_yield_uses_net_liquidation():

@@ -25,10 +25,30 @@ def get_intrinsic_value(right: str | None, strike: float | None, underlying_pric
 def enrich_positions(
     positions: list[PositionSnapshot],
     markets: list[MarketSnapshot],
-    roll_chains: dict[int, str],
+    roll_chains: dict[int, dict],
 ) -> list[PositionOut]:
+    """`roll_chains`: conid -> its open chain's id and cycle economics
+    (see `repo.open_roll_chains`). Positions outside a chain get leg-level
+    metrics only."""
     market_by_symbol = {m.symbol: m for m in markets if m.symbol}
     today = datetime.now(timezone.utc).date()
+
+    # What it would cost to buy back every open short in a chain. Summed per
+    # chain so that if one chain holds more than one short leg, each row nets
+    # against all of them rather than claiming the chain's whole credit against
+    # its own leg.
+    chain_buyback: dict[str, float] = {}
+    for p in positions:
+        info = roll_chains.get(p.conid)
+        if (
+            info is not None
+            and p.mark is not None
+            and p.position is not None
+            and float(p.position) < 0
+        ):
+            cost = float(p.mark) * 100.0 * abs(float(p.position))
+            chain_buyback[info["chain_id"]] = chain_buyback.get(info["chain_id"], 0.0) + cost
+
     out = []
 
     for p in positions:
@@ -55,7 +75,8 @@ def enrich_positions(
         }
 
         # Roll chain
-        data["chain_id"] = roll_chains.get(p.conid)
+        chain = roll_chains.get(p.conid)
+        data["chain_id"] = chain["chain_id"] if chain else None
 
         # DTE
         if p.expiry:
@@ -144,11 +165,34 @@ def enrich_positions(
                 data["breakeven"] = be
                 data["breakeven_cushion_pct"] = (be - u) / u
 
+        # Chain-level capture. For a rolled short, the leg-level number above is
+        # misleading: a roll re-sells a fresh, fatter premium, so the new leg can
+        # read "76% captured" while the trade as a whole is nowhere near done.
+        # What you'd actually pocket by unwinding today is the chain's credit
+        # since this cycle began, less the cost to buy the short back — measured
+        # against `initial_credit`, the sale the cycle is working toward.
+        data["chain_captured_pct"] = None
+        data["chain_profit_if_closed"] = None
+        data["chain_initial_credit"] = None
+        if chain is not None:
+            initial = chain.get("initial_credit")
+            cumulative = chain.get("cumulative_credit")
+            buyback = chain_buyback.get(chain["chain_id"])
+            if initial and initial > 0 and cumulative is not None and buyback is not None:
+                profit = cumulative - chain.get("cycle_base_credit", 0.0) - buyback
+                data["chain_initial_credit"] = initial
+                data["chain_profit_if_closed"] = profit
+                data["chain_captured_pct"] = profit / initial
+
         # Status rules. The first three are critical (TAKE PROFIT / AT RISK /
         # EXPIRING). WATCH is a softer tier for a position sitting *near* a
         # threshold — so one hovering on the line (e.g. cushion ~3% as the live
         # price ticks) stays visible instead of flickering in and out of alerts.
-        cap = data["premium_captured_pct"]
+        # Capture is judged on the chain when the position belongs to one, so a
+        # rolled trade isn't called done on the strength of its newest leg alone.
+        cap = data["chain_captured_pct"]
+        if cap is None:
+            cap = data["premium_captured_pct"]
         cush = data["cushion_pct"]
         dte = data["dte"]
         status = "OPEN"

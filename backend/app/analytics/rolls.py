@@ -5,6 +5,16 @@ the lifecycle of a continuously-short option position on one
 (underlying ticker, right, strike), tracked across rolls, expirations and
 assignments. Cumulative credit accrues over the whole lifecycle. A chain that
 goes flat is re-opened by the next same-key sell within CHAIN_CONTINUATION_DAYS.
+
+Beyond the running credit, each chain carries the economics of its current
+*cycle* — the stretch from a sale to the moment that short is finally gone. A
+roll doesn't bank the new leg's credit; it swaps one open leg for another and
+banks only the decay on the leg it replaced, leaving the cycle's premium target
+unchanged. So a chain tracks `open_credit` (locked in the leg open right now),
+`initial_credit` (the sale the cycle is working toward) and `cycle_base_credit`
+(where cumulative credit stood when the cycle began). Everything the cockpit
+reports about an open chain — what's banked, what closing now would net, how
+much of the target is captured — is derived from those three.
 """
 from __future__ import annotations
 
@@ -141,6 +151,35 @@ def _find_roll_candidate(
     return best
 
 
+def _is_roll(chain: dict, when) -> bool:
+    """True if a sell is the far side of a roll rather than a standalone trade.
+
+    A roll's buy-to-close and sell-to-open land together, so a short bought back
+    a moment ago is being *extended*. One bought back and then left alone for
+    days is simply finished, and so is one that expired or was assigned.
+    """
+    if chain["_flat_reason"] != "bought_back" or chain["_flat_at"] is None:
+        return False
+    return (when - chain["_flat_at"]).days <= ROLL_WINDOW_DAYS
+
+
+def _short_reduced(chain: dict, pos_before: float, when, reason: str) -> None:
+    """Sync cycle bookkeeping after a buy/expiry/assignment shrinks the short.
+
+    `open_credit` is the credit riding on the leg that's still open, so it scales
+    down with the position and reaches zero once the short is gone. `when`/
+    `reason` record how the short last went flat — that's what tells the next
+    sell whether it's rolling this cycle onward or starting a fresh one.
+    """
+    after = chain["_opt_pos"]
+    if after >= -1e-6:
+        chain["open_credit"] = 0.0
+        chain["_flat_at"] = when
+        chain["_flat_reason"] = reason
+    elif pos_before < -1e-6:
+        chain["open_credit"] *= abs(after) / abs(pos_before)
+
+
 def _relabel_last_close_as_roll(legs: list[dict], chain_id: str) -> None:
     """Relabel a chain's most recent 'close' leg as 'roll' — the buy side of a
     cross-strike roll that we've now recognised as a continuation."""
@@ -222,7 +261,9 @@ def build_roll_chains(
                         "role": "expired",
                         "created_at": exp_dt,
                     })
+                    pos_before = chain["_opt_pos"]
                     chain["_opt_pos"] = 0
+                    _short_reduced(chain, pos_before, exp_dt, "expired")
                     if chain["_stk_pos"] == 0:
                         chain["status"] = "closed"
                         chain["closed_at"] = exp_dt
@@ -243,8 +284,10 @@ def build_roll_chains(
                         "role": "expired",
                         "created_at": e.exec_time,
                     })
+                    pos_before = chain["_opt_pos"]
                     chain["_opt_pos"] += qd if chain["_opt_pos"] < 0 else -qd
                     chain["cumulative_credit"] += _credit(e)
+                    _short_reduced(chain, pos_before, e.exec_time, "expired")
                     if abs(chain["_opt_pos"]) < 1e-6 and chain["_stk_pos"] == 0:
                         chain["status"] = "closed"
                         chain["closed_at"] = e.exec_time
@@ -255,6 +298,12 @@ def build_roll_chains(
                 # Sell to open / continue. A closed chain re-opens only if the
                 # new sell lands within the continuation window.
                 sto_role = "open"
+                # Had this chain fully settled — no short, no assigned shares —
+                # before this sell? Read it now: the re-open below rewrites
+                # `status`. A sell into a settled chain is a new trade with its
+                # own premium target; a sell into a chain that's still live
+                # carries the existing one on.
+                was_settled = chain is None or chain["status"] == "closed"
                 if chain is not None and chain["status"] == "closed":
                     days_diff = (e.exec_time - chain["closed_at"]).days
                     if days_diff <= CHAIN_CONTINUATION_DAYS:
@@ -300,17 +349,47 @@ def build_roll_chains(
                         "opened_at": e.exec_time,
                         "closed_at": None,
                         "cumulative_credit": 0.0,
+                        "open_credit": 0.0,
+                        "initial_credit": None,
+                        "cycle_base_credit": 0.0,
                         "meta": None,
                         "_opt_pos": 0,
                         "_stk_pos": 0,
                         "_current_expiry": e.expiry,
                         "_last_conid": e.conid,
+                        "_flat_at": None,
+                        "_flat_reason": None,
                     }
                     chains.append(chain)
                     active_chains[key] = chain
                 else:
                     chain["_current_expiry"] = e.expiry
                     chain["_last_conid"] = e.conid
+
+                # Does this sell carry the current cycle on, or start a new one?
+                credit = _credit(e)
+                if chain["_opt_pos"] < -1e-6:
+                    # Selling on top of an existing short scales this cycle up
+                    # rather than starting another one.
+                    chain["open_credit"] += credit
+                    chain["initial_credit"] = (chain["initial_credit"] or 0.0) + credit
+                else:
+                    rolling = _is_roll(chain, e.exec_time)
+                    if rolling and sto_role == "open":
+                        # Same-key roll (the cross-strike path labels its own pair).
+                        sto_role = "roll"
+                        _relabel_last_close_as_roll(legs, chain["chain_id"])
+
+                    # The cycle survives a roll, and survives a chain that never
+                    # settled — selling a fresh put against shares you were
+                    # assigned is the same trade grinding on, not a new one. Only
+                    # a sale into a settled chain starts a cycle of its own, and
+                    # a settled chain has no stock left to book, so the credit it
+                    # has banked is final and safe to measure the new cycle from.
+                    if not chain["initial_credit"] or (was_settled and not rolling):
+                        chain["initial_credit"] = credit
+                        chain["cycle_base_credit"] = chain["cumulative_credit"]
+                    chain["open_credit"] = credit
 
                 legs.append({
                     "chain_id": chain["chain_id"],
@@ -319,7 +398,7 @@ def build_roll_chains(
                     "role": sto_role,
                     "created_at": e.exec_time,
                 })
-                chain["cumulative_credit"] += _credit(e)
+                chain["cumulative_credit"] += credit
                 chain["_opt_pos"] -= abs(float(e.qty or 0))
 
             elif side in ("B", "A"):
@@ -361,7 +440,9 @@ def build_roll_chains(
                         "created_at": e.exec_time,
                     })
                     chain["cumulative_credit"] += _credit(e)
+                    pos_before = chain["_opt_pos"]
                     chain["_opt_pos"] += abs(float(e.qty or 0))
+                    _short_reduced(chain, pos_before, e.exec_time, reason)
 
                     if is_assignment:
                         # A put assigned delivers shares; a call assigned has them
@@ -402,7 +483,8 @@ def build_roll_chains(
                     # turning it into an orphan would mint a phantom strike-0 chain.
                     continue
                 else:
-                    # Orphan buy — no open chain to close.
+                    # Orphan buy — no open chain to close. It never sold anything,
+                    # so there's no cycle here for a later sell to continue.
                     chain = {
                         "chain_id": _chain_id(e.exec_id),
                         "account_id": account_id,
@@ -415,11 +497,16 @@ def build_roll_chains(
                         "opened_at": e.exec_time,
                         "closed_at": e.exec_time,
                         "cumulative_credit": _credit(e),
+                        "open_credit": 0.0,
+                        "initial_credit": None,
+                        "cycle_base_credit": 0.0,
                         "meta": None,
                         "_opt_pos": abs(float(e.qty or 0)),
                         "_stk_pos": 0,
                         "_current_expiry": e.expiry,
                         "_last_conid": e.conid,
+                        "_flat_at": None,
+                        "_flat_reason": None,
                     }
                     chains.append(chain)
                     legs.append({
@@ -462,7 +549,9 @@ def build_roll_chains(
                             "role": "assignment",
                             "created_at": e.exec_time,
                         })
+                        pos_before = chain["_opt_pos"]
                         chain["_opt_pos"] = 0
+                        _short_reduced(chain, pos_before, e.exec_time, "assigned")
                     # …and record the resulting stock leg.
                     legs.append({
                         "chain_id": chain["chain_id"],
@@ -513,7 +602,9 @@ def build_roll_chains(
                     "role": "expired",
                     "created_at": exp_dt,
                 })
+                pos_before = chain["_opt_pos"]
                 chain["_opt_pos"] = 0
+                _short_reduced(chain, pos_before, exp_dt, "expired")
                 if chain["_stk_pos"] == 0:
                     chain["status"] = "closed"
                     chain["closed_at"] = exp_dt
@@ -525,7 +616,13 @@ def build_roll_chains(
         c.pop("_stk_pos", None)
         c.pop("_current_expiry", None)
         c.pop("_last_conid", None)
+        c.pop("_flat_at", None)
+        c.pop("_flat_reason", None)
         c["cumulative_credit"] = float(c["cumulative_credit"])
+        c["open_credit"] = float(c["open_credit"])
+        c["cycle_base_credit"] = float(c["cycle_base_credit"])
+        if c["initial_credit"] is not None:
+            c["initial_credit"] = float(c["initial_credit"])
 
     if adjustments:
         _apply_adjustments(chains, legs, adjustments)
@@ -557,6 +654,8 @@ def _apply_adjustments(chains: list[dict], legs: list[dict], adjustments: list) 
                 target["status"] = "closed"
                 target["close_reason"] = getattr(adj, "close_reason", None) or "manual_close"
                 target["closed_at"] = getattr(adj, "close_date", None) or _last_leg_dt(legs, target["chain_id"])
+                # The trade is over, so nothing is riding on an open leg any more.
+                target["open_credit"] = 0.0
 
         elif atype == "manual_link":
             exec_id = getattr(adj, "exec_id", None)
@@ -572,6 +671,14 @@ def _apply_adjustments(chains: list[dict], legs: list[dict], adjustments: list) 
                 if l["chain_id"] == src_id:
                     l["chain_id"] = target["chain_id"]
             target["cumulative_credit"] = float(target["cumulative_credit"]) + float(src["cumulative_credit"])
+            # A manual link says "these are one rolled trade": the locked credit
+            # of whichever side is still open carries over, while the premium
+            # target stays the one the earlier chain set — that's the sale the
+            # whole roll is working toward.
+            target["open_credit"] = float(target["open_credit"]) + float(src["open_credit"])
+            if not target["initial_credit"]:
+                target["initial_credit"] = src["initial_credit"]
+                target["cycle_base_credit"] = src["cycle_base_credit"]
             if src["status"] == "open":
                 target["status"] = "open"
                 target["closed_at"] = None
