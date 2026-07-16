@@ -33,7 +33,15 @@ async def _income_for(db: AsyncSession, account_id: str) -> dict:
         if account and account.net_liquidation is not None
         else None
     )
-    return compute_income(chains, adjustments, net_liquidation=net_liq)
+    acct_row = await repo.account_by_id(db, account_id)
+    mismatch = False
+    if acct_row and acct_row.base_currency:
+        mismatch = await repo.account_has_foreign_currency_trades(
+            db, account_id, acct_row.base_currency
+        )
+    return compute_income(
+        chains, adjustments, net_liquidation=net_liq, currency_mismatch=mismatch
+    )
 
 
 def _combine(per_account: list[dict]) -> dict:
@@ -91,6 +99,9 @@ def _combine(per_account: list[dict]) -> dict:
     ]
     net_liq = sum(net_liqs) if net_liqs else None
 
+    # A mismatch in any one account's own trades taints the combined yield too.
+    currency_mismatch = any(s.get("currency_mismatch") for s in per_account)
+
     return {
         "months": months,
         "years": years,
@@ -101,7 +112,10 @@ def _combine(per_account: list[dict]) -> dict:
         "closed_count": closed,
         "open_count": sum(s["open_count"] for s in per_account),
         "net_liquidation": net_liq,
-        "yield_pct": (all_time / net_liq) if net_liq else None,
+        "yield_pct": (
+            (all_time / net_liq) if net_liq and not currency_mismatch else None
+        ),
+        "currency_mismatch": currency_mismatch,
     }
 
 

@@ -116,6 +116,9 @@ def normalize_position(raw: dict) -> dict:
         "mark": to_float(raw.get("mktPrice")),
         "market_value": to_float(raw.get("mktValue")),
         "unrealized_pnl": to_float(raw.get("unrealizedPnl")),
+        # The contract's own trading currency - not the account's base
+        # currency. IBKR reports this separately and never converts it.
+        "currency": raw.get("currency") or None,
         "raw": raw,
     }
 
@@ -142,7 +145,19 @@ def normalize_summary(raw: dict) -> dict:
                 return to_float(cell)
         return None
 
-    return {field: amount(*keys) for field, keys in _SUMMARY_KEYS.items()}
+    def currency(*keys) -> str | None:
+        for k in keys:
+            cell = raw.get(k)
+            if isinstance(cell, dict) and cell.get("currency"):
+                return cell["currency"]
+        return None
+
+    result = {field: amount(*keys) for field, keys in _SUMMARY_KEYS.items()}
+    # The account's base currency - IBKR converts every summary total (net
+    # liq, buying power, ...) into this currency, unlike individual
+    # position/trade prices which stay in the contract's own currency.
+    result["base_currency"] = currency("netliquidation", "totalcashvalue", "availablefunds")
+    return result
 
 
 def normalize_trade(raw: dict, account_id: str | None = None) -> dict:
@@ -179,6 +194,7 @@ def normalize_trade(raw: dict, account_id: str | None = None) -> dict:
         "price": to_float(raw.get("price")),
         "commission": to_float(raw.get("commission")),
         "realized_pnl": to_float(raw.get("realized_pnl")),
+        "currency": raw.get("currency") or None,
         "exec_time": parse_trade_time(raw),
         "source": "poll",
         "raw": raw,

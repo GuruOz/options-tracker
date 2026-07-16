@@ -27,6 +27,8 @@ class PositionOut(_ORM):
     mark: float | None = None
     market_value: float | None = None
     unrealized_pnl: float | None = None
+    # The contract's own trading currency, not the account's base currency.
+    currency: str | None = None
     delta: float | None = None
     gamma: float | None = None
     theta: float | None = None
@@ -101,6 +103,8 @@ class TradeOut(_ORM):
     qty: float | None = None
     price: float | None = None
     commission: float | None = None
+    # The contract's own trading currency, not the account's base currency.
+    currency: str | None = None
     exec_time: datetime | None = None
     account_id: str | None = None
     account_label: str | None = None
@@ -185,6 +189,12 @@ class RiskOut(BaseModel):
     gross_delta_dollars: float | None = None
     scenario_pnl: float | None = None
     scenario_pnl_pct: float | None = None
+    # True when scenario_pnl_pct/assignment.coverage_ratio were suppressed
+    # because a position's currency differs from the account's base currency.
+    currency_mismatch: bool = False
+    # The common currency of the dollar figures above, when unambiguous
+    # (every contributing position agreed on one currency).
+    exposure_currency: str | None = None
     assignment: AssignmentOut
     positions: list[RiskPositionOut] = []
     equity_curve: list[EquityPointOut] = []

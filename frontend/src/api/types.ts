@@ -58,6 +58,8 @@ export interface Position {
   mark: number | null;
   market_value: number | null;
   unrealized_pnl: number | null;
+  // The contract's own trading currency, not the account's base currency.
+  currency: string | null;
   delta: number | null;
   gamma: number | null;
   theta: number | null;
@@ -191,6 +193,8 @@ export interface Trade {
   qty: number | null;
   price: number | null;
   commission: number | null;
+  // The contract's own trading currency, not the account's base currency.
+  currency: string | null;
   exec_time: string | null;
   account_id: string | null;
   account_label: string | null;
@@ -264,6 +268,11 @@ export interface Risk {
   gross_delta_dollars: number | null;
   scenario_pnl: number | null;
   scenario_pnl_pct: number | null;
+  // True when scenario_pnl_pct/assignment.coverage_ratio were suppressed
+  // because a position's currency differs from the account's base currency.
+  currency_mismatch: boolean;
+  // The common currency of the dollar figures above, when unambiguous.
+  exposure_currency: string | null;
   assignment: Assignment;
   positions: RiskPosition[];
   equity_curve: EquityPoint[];
@@ -303,6 +312,10 @@ export interface Income {
   open_count: number;
   net_liquidation: number | null;
   yield_pct: number | null;
+  // True when yield_pct was suppressed because a trade's currency differs
+  // from the account's base currency (premium and net_liquidation would
+  // otherwise be silently divided across two different currencies).
+  currency_mismatch: boolean;
   // Present only in the combined view. The derived P&L sums across accounts,
   // but the manual overlay (cashed out / withdrawal / note) belongs to one
   // account, so it is carried per account instead of merged.

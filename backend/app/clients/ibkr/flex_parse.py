@@ -163,6 +163,7 @@ def parse_flex_xml(xml_text: str, account_id: str) -> list[dict[str, Any]]:
                 "price": _float_val(trade, "tradePrice"),
                 "commission": _float_val(trade, "ibCommission"),
                 "realized_pnl": _float_val(trade, "fifoPnlRealized"),
+                "currency": _text(trade, "currency"),
                 "exec_time": _parse_flex_time(
                     _text(trade, "tradeDate") or _text(trade, "dateTime")
                 ),
@@ -218,6 +219,7 @@ def parse_flex_xml(xml_text: str, account_id: str) -> list[dict[str, Any]]:
                 "price": 0.0,
                 "commission": 0.0,
                 "realized_pnl": 0.0,
+                "currency": _text(eae, "currency"),
                 "exec_time": _parse_flex_time(_text(eae, "date")),
                 "source": "flex_eae",
                 "raw": {k: v for k, v in eae.attrib.items() if v is not None},

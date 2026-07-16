@@ -46,3 +46,42 @@ def test_skips_delta_without_price_but_still_counts_assignment():
     assert r["assignment"]["total_obligation"] == 15_000.0
     assert r["assignment"]["coverage_ratio"] is None  # no account/cash
     assert r["scenario_pnl_pct"] is None
+
+
+def test_currency_mismatch_suppresses_ratios_not_dollar_figures():
+    # A SGD-base account (cash/net_liq) holding a USD-listed short put: the
+    # obligation/scenario P&L stay valid dollar figures, but dividing them by
+    # SGD cash/net_liq would silently mix currencies.
+    short_put = PositionSnapshot(
+        conid=1, symbol="QQQ", sec_type="OPT", right="P",
+        strike=400.0, position=-2.0, delta=-0.30, mark=2.0, currency="USD",
+    )
+    markets = [MarketSnapshot(symbol="QQQ", price=450.0)]
+    acct = AccountSnapshot(cash=100_000.0, net_liquidation=250_000.0)
+
+    r = compute_risk([short_put], markets, acct, account_currency="SGD")
+
+    assert r["currency_mismatch"] is True
+    assert r["exposure_currency"] == "USD"
+    assert r["scenario_pnl_pct"] is None
+    assert r["assignment"]["coverage_ratio"] is None
+    # The dollar figures themselves are untouched - just not divisible by SGD.
+    assert r["assignment"]["total_obligation"] == 80_000.0
+    assert r["scenario_pnl"] != 0.0
+
+
+def test_unknown_currency_does_not_trigger_mismatch():
+    # No currency recorded on the position (older row / feed gap) - unknown
+    # isn't evidence of a mismatch, so behavior matches pre-currency-tracking.
+    short_put = PositionSnapshot(
+        conid=1, symbol="QQQ", sec_type="OPT", right="P",
+        strike=400.0, position=-2.0, delta=-0.30, mark=2.0,
+    )
+    markets = [MarketSnapshot(symbol="QQQ", price=450.0)]
+    acct = AccountSnapshot(cash=100_000.0, net_liquidation=250_000.0)
+
+    r = compute_risk([short_put], markets, acct, account_currency="SGD")
+
+    assert r["currency_mismatch"] is False
+    assert r["scenario_pnl_pct"] is not None
+    assert r["assignment"]["coverage_ratio"] is not None

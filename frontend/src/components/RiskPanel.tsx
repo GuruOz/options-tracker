@@ -104,6 +104,14 @@ export function RiskPanel() {
         <span className="text-xs text-slate-400 dark:text-slate-500">linear estimate — not advice</span>
       </div>
 
+      {data.currency_mismatch && (
+        <p className="mb-3 text-xs text-amber-600 dark:text-amber-400">
+          Positions are held in a different currency than the account
+          {data.exposure_currency ? ` (${data.exposure_currency} vs. account currency)` : ""} —
+          scenario P&amp;L % and assignment coverage aren't shown to avoid dividing mismatched currencies.
+        </p>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
           label="Net liquidation"

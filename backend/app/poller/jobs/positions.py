@@ -78,6 +78,7 @@ async def _poll_positions_one(runtime: GatewayRuntime) -> None:
             mark=n["mark"],
             market_value=n["market_value"],
             unrealized_pnl=n["unrealized_pnl"],
+            currency=n["currency"],
             raw=n["raw"],
         )
         if g and g["has_greeks"]:

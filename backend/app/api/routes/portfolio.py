@@ -219,7 +219,7 @@ async def close_chain_manual(chain_id: str, db: AsyncSession = Depends(get_sessi
 
 _COLUMNS_TRADES = {
     "exec_id", "account_id", "conid", "symbol", "sec_type", "side", "right",
-    "strike", "expiry", "qty", "price", "commission", "realized_pnl",
+    "strike", "expiry", "qty", "price", "commission", "realized_pnl", "currency",
     "exec_time", "source", "raw",
 }
 

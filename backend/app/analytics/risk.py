@@ -30,7 +30,15 @@ def compute_risk(
     markets: list[MarketSnapshot],
     account: AccountSnapshot | None,
     settings: dict | None = None,
+    account_currency: str | None = None,
 ) -> dict:
+    """`account_currency` is the account's base currency (e.g. "SGD"). Position
+    prices/strikes stay in the contract's own currency (e.g. "USD" for a
+    US-listed option) - IBKR never converts them. When a position's recorded
+    currency differs from the account's, ratios that would otherwise divide
+    one against the other (assignment coverage, scenario P&L %) are suppressed
+    rather than silently wrong. Positions with no recorded currency (older
+    rows, or a feed that didn't report one) are not treated as a mismatch."""
     cfg = (settings or DEFAULT_SETTINGS).get("risk") or DEFAULT_SETTINGS["risk"]
     scenario_move = float(cfg.get("scenario_move", -0.10))
     index_symbol = cfg.get("index_symbol", "QQQ")
@@ -102,8 +110,25 @@ def compute_risk(
         if account and account.net_liquidation is not None
         else None
     )
+
+    # `cash`/`net_liq` are in the account's base currency; position prices
+    # (and so `total_obligation`, `scenario_pnl`) stay in the contract's own
+    # currency. Only suppress a ratio once we have positive evidence they
+    # differ - a position with no recorded currency isn't evidence either way.
+    position_currencies = {p.currency for p in positions if p.currency}
+    currency_mismatch = bool(
+        account_currency and any(c != account_currency for c in position_currencies)
+    )
+    # Only label the dollar figures with a currency when every position that
+    # fed them agrees on one - otherwise leave it for the caller to hedge.
+    exposure_currency = (
+        next(iter(position_currencies)) if len(position_currencies) == 1 else None
+    )
+
     coverage_ratio = (
-        cash / total_obligation if cash is not None and total_obligation > 0 else None
+        cash / total_obligation
+        if cash is not None and total_obligation > 0 and not currency_mismatch
+        else None
     )
 
     contributions.sort(key=lambda c: abs(c["scenario_pnl"]), reverse=True)
@@ -115,7 +140,11 @@ def compute_risk(
         "beta_weighted_delta_dollars": beta_weighted,
         "gross_delta_dollars": gross,
         "scenario_pnl": scenario_pnl,
-        "scenario_pnl_pct": (scenario_pnl / net_liq) if net_liq else None,
+        "scenario_pnl_pct": (
+            (scenario_pnl / net_liq) if net_liq and not currency_mismatch else None
+        ),
+        "currency_mismatch": currency_mismatch,
+        "exposure_currency": exposure_currency,
         "assignment": {
             "total_obligation": total_obligation,
             "cash": cash,

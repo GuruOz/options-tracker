@@ -18,7 +18,7 @@ log = get_logger("poller.trades")
 
 _COLUMNS = {
     "exec_id", "account_id", "conid", "symbol", "sec_type", "side", "right",
-    "strike", "expiry", "qty", "price", "commission", "realized_pnl",
+    "strike", "expiry", "qty", "price", "commission", "realized_pnl", "currency",
     "exec_time", "source", "raw",
 }
 

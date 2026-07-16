@@ -145,6 +145,7 @@ def parse_ibkr_csv(content: bytes | str, account_id: str) -> list[dict[str, Any]
             ),
             "commission": float(row["Comm/Fee"]) if row.get("Comm/Fee") else None,
             "realized_pnl": float(row["Realized P/L"]) if row.get("Realized P/L") else None,
+            "currency": (row.get("Currency") or "").strip() or None,
             "exec_time": _parse_exec_time(date_raw),
             "source": "flex_import",
             "raw": {k: v for k, v in row.items() if v},

@@ -221,6 +221,11 @@ export function IncomePanel() {
           {" "}Per-account: {byAccount.map((a) => `${a.account_label} ${money(a.all_time, true)}`).join(" · ")}
         </p>
       )}
+      {data.currency_mismatch && (
+        <p className="mb-3 text-xs text-amber-600 dark:text-amber-400">
+          Trades are in a different currency than the account's net liquidation — yield % isn't shown to avoid dividing mismatched currencies.
+        </p>
+      )}
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Stat

@@ -65,6 +65,10 @@ class Execution(Base):
     price: Mapped[float | None] = mapped_column(Money)
     commission: Mapped[float | None] = mapped_column(Money)
     realized_pnl: Mapped[float | None] = mapped_column(Money)
+    # The contract's own trading currency (e.g. "USD" for a US-listed option),
+    # NOT the account's base currency - IBKR never converts trade-level prices.
+    # See app/analytics/risk.py and app/analytics/income.py for why this matters.
+    currency: Mapped[str | None] = mapped_column(String(8))
     exec_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source: Mapped[str | None] = mapped_column(String(16))  # poll / flex_import
     raw: Mapped[dict | None] = mapped_column(JSONB)
@@ -94,6 +98,8 @@ class PositionSnapshot(Base):
     mark: Mapped[float | None] = mapped_column(Money)
     market_value: Mapped[float | None] = mapped_column(Money)
     unrealized_pnl: Mapped[float | None] = mapped_column(Money)
+    # The contract's own trading currency - see Execution.currency above.
+    currency: Mapped[str | None] = mapped_column(String(8))
     delta: Mapped[float | None] = mapped_column(Greek)
     gamma: Mapped[float | None] = mapped_column(Greek)
     theta: Mapped[float | None] = mapped_column(Greek)

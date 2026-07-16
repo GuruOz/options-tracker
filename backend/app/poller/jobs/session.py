@@ -50,7 +50,7 @@ _COMPETING_MSG = "Competing session detected (likely mobile) — backing off."
 
 _COLUMNS_TRADES = {
     "exec_id", "account_id", "conid", "symbol", "sec_type", "side", "right",
-    "strike", "expiry", "qty", "price", "commission", "realized_pnl",
+    "strike", "expiry", "qty", "price", "commission", "realized_pnl", "currency",
     "exec_time", "source", "raw",
 }
 
@@ -132,6 +132,7 @@ async def _persist_pull_result(pull: dict, account_id: str) -> None:
                     mark=n.get("mark"),
                     market_value=n.get("market_value"),
                     unrealized_pnl=n.get("unrealized_pnl"),
+                    currency=n.get("currency"),
                     raw=n.get("raw"),
                 )
                 if g and g.get("has_greeks"):
@@ -160,6 +161,8 @@ async def _persist_pull_result(pull: dict, account_id: str) -> None:
                 cash=n.get("cash"),
                 raw=account.get("raw"),
             ))
+            if n.get("base_currency"):
+                await repo.set_account_currency(session, account_id, n["base_currency"])
 
         trades = pull.get("trades", {})
         if trades.get("status") == "ok":

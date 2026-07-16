@@ -11,6 +11,7 @@ from app.clients.ibkr.normalize import normalize_summary
 from app.core.gateways import GatewayRuntime, active_runtimes
 from app.core.logging import get_logger
 from app.core.state import broadcast_event
+from app.db import repo
 from app.db.base import AsyncSessionLocal
 from app.db.models import AccountSnapshot
 
@@ -53,6 +54,8 @@ async def _poll_account_one(runtime: GatewayRuntime) -> None:
     )
     async with AsyncSessionLocal() as session:
         session.add(snap)
+        if n.get("base_currency"):
+            await repo.set_account_currency(session, account_id, n["base_currency"])
         await session.commit()
     log.info(
         "account_snapshot", gateway=runtime.gateway_id,

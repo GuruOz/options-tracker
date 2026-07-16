@@ -110,3 +110,17 @@ def test_yield_uses_net_liquidation():
     out = compute_income(chains, [], net_liquidation=50000.0)
     assert out["yield_pct"] == 0.02
     assert compute_income(chains, [])["yield_pct"] is None
+
+
+def test_currency_mismatch_suppresses_yield_not_pnl():
+    # A SGD-base account whose premium is actually USD (US-listed options):
+    # the P&L totals stay valid dollar figures, but dividing by SGD
+    # net_liquidation would silently mix currencies.
+    chains = [_chain((2026, 1, 1), "closed", 1000.0)]
+    out = compute_income(
+        chains, [], net_liquidation=50000.0, currency_mismatch=True
+    )
+    assert out["currency_mismatch"] is True
+    assert out["yield_pct"] is None
+    assert out["all_time"] == 1000.0
+    assert out["realized"] == 1000.0

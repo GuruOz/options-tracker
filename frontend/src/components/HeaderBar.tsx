@@ -4,12 +4,15 @@ import { getJSON, postJSON, withAccount } from "../api/client";
 import type { AccountInfo, AccountSummary, PullResult, SessionMap, SessionState } from "../api/types";
 import { ALL_ACCOUNTS, useAccount } from "../hooks/useAccount";
 
-const money = (v: number | null | undefined) =>
+// Falls back to USD when an account's base currency hasn't been reported yet
+// (e.g. a brand-new account before its first summary poll) - matches the
+// pre-currency-tracking behavior rather than showing something worse.
+const money = (v: number | null | undefined, currency = "USD") =>
   v == null
     ? "—"
     : v.toLocaleString(undefined, {
         style: "currency",
-        currency: "USD",
+        currency,
         maximumFractionDigits: 0,
       });
 
@@ -200,6 +203,11 @@ export function HeaderBar({ sessions }: { sessions: SessionMap }) {
       : ((account?.[s.key] as number | null) ?? null);
   }
 
+  // These are account-level totals (net liq, cash, ...) - always in the
+  // account's own base currency, never the trade/position currency.
+  const selectedCurrency =
+    accounts.find((a) => a.account_id === selected)?.base_currency ?? "USD";
+
   // Summing money across accounts only means something in one currency.
   const currencies = new Set(
     accounts.map((a) => a.base_currency).filter((c): c is string => !!c),
@@ -291,7 +299,12 @@ export function HeaderBar({ sessions }: { sessions: SessionMap }) {
                 {s.label}
               </p>
               <p className="mt-0.5 text-sm font-semibold text-slate-800 dark:text-slate-50">
-                {mixedCurrency ? "—" : money(stats[s.key])}
+                {mixedCurrency
+                  ? "—"
+                  : money(
+                      stats[s.key],
+                      isAll ? (currencies.values().next().value ?? "USD") : selectedCurrency,
+                    )}
               </p>
             </div>
           ))}
@@ -310,7 +323,7 @@ export function HeaderBar({ sessions }: { sessions: SessionMap }) {
             <span key={a.account_id} className="text-slate-400 dark:text-slate-500">
               {a.label}:{" "}
               <span className="font-semibold text-slate-600 dark:text-slate-300">
-                {money(a.net_liquidation)}
+                {money(a.net_liquidation, a.base_currency ?? "USD")}
               </span>
             </span>
           ))}

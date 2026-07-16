@@ -47,7 +47,7 @@ def test_normalize_position_option():
         "conid": 265598, "ticker": "AAPL", "contractDesc": "AAPL 19JAN24 150 P",
         "position": -2, "mktPrice": 1.25, "mktValue": -250, "avgCost": 2.0,
         "unrealizedPnl": 150, "assetClass": "OPT", "strike": "150",
-        "putOrCall": "P", "expiry": "20240119",
+        "putOrCall": "P", "expiry": "20240119", "currency": "USD",
     }
     n = normalize_position(raw)
     assert n["conid"] == 265598
@@ -57,6 +57,7 @@ def test_normalize_position_option():
     assert n["expiry"] == date(2024, 1, 19)
     assert n["position"] == -2.0
     assert n["mark"] == 1.25
+    assert n["currency"] == "USD"
 
 
 def test_parse_option_desc_from_osi():
@@ -114,6 +115,13 @@ def test_normalize_summary():
     assert n["maintenance_margin"] == 20000.0
     assert n["cash"] == 30000.0
     assert n["leverage"] is None
+    assert n["base_currency"] == "USD"
+
+
+def test_normalize_summary_base_currency_missing():
+    # No currency cell anywhere -> unknown, not a guess.
+    n = normalize_summary({"netliquidation": {"amount": 100000}})
+    assert n["base_currency"] is None
 
 
 def test_normalize_trade_commission_and_ids():
@@ -121,7 +129,7 @@ def test_normalize_trade_commission_and_ids():
         "execution_id": "00abc.1", "symbol": "AAPL", "side": "S", "price": "2.05",
         "size": 2, "conid": 265598, "sec_type": "OPT", "commission": "1.10",
         "account": "U123", "put_or_call": "P", "strike": "150",
-        "expiry": "20240119", "trade_time_r": 1705591800000,
+        "expiry": "20240119", "trade_time_r": 1705591800000, "currency": "USD",
     }
     n = normalize_trade(raw, account_id="U123")
     assert n["exec_id"] == "00abc.1"
@@ -132,6 +140,7 @@ def test_normalize_trade_commission_and_ids():
     assert n["commission"] == 1.10
     assert n["right"] == "P"
     assert n["strike"] == 150.0
+    assert n["currency"] == "USD"
 
 
 def test_parse_occ_symbol_compact():

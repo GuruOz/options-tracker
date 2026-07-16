@@ -18,8 +18,12 @@ async def _risk_for(db: AsyncSession, account_id: str, settings: dict | None) ->
     # (price=None) can't shadow a good spot and skew the beta-weighted scenario.
     markets = await repo.latest_priced_market(db)
     account = await repo.latest_account(db, account_id)
+    acct_row = await repo.account_by_id(db, account_id)
 
-    result = compute_risk(positions, markets, account, settings)
+    result = compute_risk(
+        positions, markets, account, settings,
+        account_currency=acct_row.base_currency if acct_row else None,
+    )
     result["equity_curve"] = await repo.account_series(db, account_id)
     return result
 
@@ -40,6 +44,14 @@ def _combine(per_account: list[dict]) -> dict:
     net_liq = total("net_liquidation", per_account)
     scenario_pnl = total("scenario_pnl", per_account)
 
+    # A mismatch anywhere (one account's own position/base currencies
+    # disagreeing, or two accounts simply having different base currencies)
+    # taints any ratio built from the combined total.
+    currencies = {r.get("exposure_currency") for r in per_account if r.get("exposure_currency")}
+    currency_mismatch = (
+        any(r.get("currency_mismatch") for r in per_account) or len(currencies) > 1
+    )
+
     obligations = [r["assignment"] for r in per_account if r.get("assignment")]
     combined_assignment = {
         "total_obligation": total("total_obligation", obligations),
@@ -49,7 +61,7 @@ def _combine(per_account: list[dict]) -> dict:
     }
     obligation = combined_assignment["total_obligation"]
     cash = combined_assignment["cash"]
-    if obligation and cash is not None:
+    if obligation and cash is not None and not currency_mismatch:
         combined_assignment["coverage_ratio"] = cash / obligation
 
     return {
@@ -60,8 +72,12 @@ def _combine(per_account: list[dict]) -> dict:
         "gross_delta_dollars": total("gross_delta_dollars", per_account),
         "scenario_pnl": scenario_pnl,
         "scenario_pnl_pct": (
-            scenario_pnl / net_liq if scenario_pnl is not None and net_liq else None
+            scenario_pnl / net_liq
+            if scenario_pnl is not None and net_liq and not currency_mismatch
+            else None
         ),
+        "currency_mismatch": currency_mismatch,
+        "exposure_currency": next(iter(currencies)) if len(currencies) == 1 else None,
         "assignment": combined_assignment,
         "positions": [p for r in per_account for p in r.get("positions", [])],
         "equity_curve": [],

@@ -51,6 +51,41 @@ async def account_by_id(db: AsyncSession, account_id: str) -> Account | None:
     return rows.scalar_one_or_none()
 
 
+async def set_account_currency(db: AsyncSession, account_id: str, currency: str) -> None:
+    """Idempotent upsert of just the base currency, discovered from the account
+    summary feed. Doesn't touch label/first_seen/meta on an existing row, and
+    creates a bare row if the account somehow isn't registered yet (the
+    ``_persist_account`` backfill logic tolerates an existing row with no
+    label). Caller commits."""
+    stmt = (
+        pg_insert(Account)
+        .values(account_id=account_id, base_currency=currency)
+        .on_conflict_do_update(index_elements=["account_id"], set_={"base_currency": currency})
+    )
+    await db.execute(stmt)
+
+
+async def account_has_foreign_currency_trades(
+    db: AsyncSession, account_id: str, base_currency: str
+) -> bool:
+    """True if this account has at least one execution in a currency other than
+    its own base currency (e.g. a SGD-base account trading USD-listed options).
+
+    Used to suppress ratios that would otherwise silently divide figures
+    denominated in two different currencies (see app/analytics/income.py).
+    Executions with no recorded currency (older rows, or a feed that didn't
+    report one) are not counted as a mismatch - unknown isn't evidence of one.
+    """
+    rows = await db.execute(
+        select(Execution.exec_id).where(
+            Execution.account_id == account_id,
+            Execution.currency.is_not(None),
+            Execution.currency != base_currency,
+        ).limit(1)
+    )
+    return rows.first() is not None
+
+
 async def account_labels(db: AsyncSession) -> dict[str, str]:
     """`{account_id: label}`, falling back to the id when a label is unset."""
     rows = await db.execute(select(Account.account_id, Account.label))

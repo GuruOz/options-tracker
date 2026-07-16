@@ -29,12 +29,20 @@ def compute_income(
     adjustments: Sequence,
     *,
     net_liquidation: float | None = None,
+    currency_mismatch: bool = False,
 ) -> dict:
     """Build the income summary.
 
     chains: rows with .opened_at (datetime|None), .status (str),
         .cumulative_credit and .open_credit.
     adjustments: rows with .month (date), .cashed_out, .withdrawal_amount, .note.
+
+    `net_liquidation` is the account's base-currency total; chain P&L stays in
+    the contract's own currency (e.g. "USD" for US-listed options) and IBKR
+    never converts it. `currency_mismatch` should be True when the caller has
+    confirmed at least one trade's currency differs from the account's base
+    currency - `yield_pct` is suppressed rather than silently dividing two
+    different currencies.
     """
     monthly_pnl: dict[str, float] = defaultdict(float)
     monthly_count: dict[str, int] = defaultdict(int)
@@ -117,5 +125,10 @@ def compute_income(
         "closed_count": closed,
         "open_count": open_,
         "net_liquidation": float(net_liquidation) if net_liquidation else None,
-        "yield_pct": (all_time / net_liquidation) if net_liquidation else None,
+        "yield_pct": (
+            (all_time / net_liquidation)
+            if net_liquidation and not currency_mismatch
+            else None
+        ),
+        "currency_mismatch": currency_mismatch,
     }
