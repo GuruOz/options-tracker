@@ -1,0 +1,6 @@
+# Path-scoped misconfiguration exceptions for `trivy config`.
+# See backup/Dockerfile for why DS-0002 (missing USER) is intentional there.
+misconfigurations:
+  - id: AVD-DS-0002
+    paths:
+      - "backup/Dockerfile"

@@ -1,6 +1,6 @@
 # Options Tracker — Architecture
 
-Self-hosted, open-source, **read-only** dashboard for options sellers. One Docker Compose stack per user per IBKR account — not multi-tenant SaaS. The IBKR gateway session is the only auth; no app-level accounts or payments.
+Self-hosted, open-source, **read-only** dashboard for options sellers. One Docker Compose stack per household — not multi-tenant SaaS. A single shared app-level login gates the dashboard; the IBKR gateway session is separate and per-user (see [Authentication](#authentication) and [Session lifecycle](#session-lifecycle)).
 
 ---
 
@@ -12,8 +12,9 @@ Self-hosted, open-source, **read-only** dashboard for options sellers. One Docke
 | **Database** | PostgreSQL 16 (named Docker volume) |
 | **Cache** | Redis — optional, off by default (`--profile redis`); backend runs without it (in-memory fallback) |
 | **Frontend** | React 18 + TypeScript + Vite; TanStack Query; ECharts (gauge/analytics) + Lightweight-Charts (price/OHLC); Tailwind CSS; light/dark theme, responsive |
-| **Gateway** | [IBEAM](https://github.com/Voyz/ibeam) (`voyz/ibeam:latest`) — headless CP Gateway; auth is user-initiated, on-demand. Docker socket is mounted into the backend for container start/stop. |
-| **Edge** | nginx — serves the built SPA and reverse-proxies `/api` and `/ws` (single browser origin). Only container with a host-published port (loopback by default) |
+| **Gateway** | [IBEAM](https://github.com/Voyz/ibeam) (`voyz/ibeam:latest`) — headless CP Gateway; auth is user-initiated, on-demand. The backend restarts it via `docker-proxy` (see below), never a mounted socket. |
+| **Docker proxy** | [tecnativa/docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) — the backend's only path to the Docker API. Allowlists container list/inspect/start/stop/restart; everything else (images, exec, volumes...) is denied. Sits on its own `internal: true` network so the gateways/db can never reach it. |
+| **Edge** | nginx — TLS termination, security headers, rate limiting, serves the built SPA, reverse-proxies `/api` and `/ws` (single browser origin). Only container with a host-published port (loopback by default) |
 
 Account scope v1: **single account**, but the schema is multi-ready — `account_id` FKs everywhere so a v2 per-account-gateway is additive.
 
@@ -24,8 +25,37 @@ Account scope v1: **single account**, but the schema is multi-ready — `account
 - Browser **never** contacts IBKR directly.
 - Backend ↔ gateway communication is server-side only, over the internal Compose network.
 - Backend is strictly **read-only** to IBKR — no order, modify, cancel, or funds-transfer endpoints exist in the client (enforced by allowlist).
-- Gateway, DB, and Redis are **never** published to the host's public interface.
+- Gateway, DB, docker-proxy, and Redis are **never** published to the host's public interface.
 - Secrets live only in `.env` / Docker secrets.
+- The backend never holds the raw Docker socket — only `docker-proxy` does, read-only, on its own isolated network.
+- Every `/api` route requires an authenticated session except `/api/health` (the compose healthcheck) and `/api/auth/login`.
+
+---
+
+## Authentication
+
+Single shared login (`AUTH_USERNAME`/`AUTH_PASSWORD_HASH` in `.env`), not
+per-person accounts — see [docs/SECURITY.md](SECURITY.md) for why that's an
+accepted trade-off rather than a gap.
+
+- **Password hashing:** argon2 (`app/core/security.py`). `app/cli/hash_password.py`
+  prints a hash for `.env`; no plaintext password is ever stored.
+- **Sessions:** server-side, in the `auth_sessions` table. The cookie holds
+  only a random token; the DB stores its sha256 hash, so a DB leak alone can't
+  be replayed as a live session. `HttpOnly` + `Secure` + `SameSite=Strict`.
+- **CSRF:** a second, non-HttpOnly cookie carries a per-session CSRF token,
+  echoed back via the `X-CSRF-Token` header on every mutating request
+  (POST/PUT/PATCH/DELETE) and checked server-side in `app/api/deps.py`.
+- **WebSocket:** `/ws` validates the session cookie (and same-origin) before
+  `accept()` — an unauthenticated client never completes the handshake.
+- **Brute-force lockout:** an in-memory per-IP counter locks out login
+  attempts after `AUTH_MAX_FAILED_LOGINS` failures for `AUTH_LOCKOUT_SECONDS`.
+- **Audit log:** `auth_login_success`/`auth_login_failed`/`auth_logout` and a
+  per-request `http_request` line, as structured JSON via structlog.
+
+This sits in front of, and is entirely independent from, the per-user IBKR
+gateway session described below — logging into the dashboard does not log
+into IBKR, and vice versa.
 
 ---
 

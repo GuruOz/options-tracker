@@ -13,10 +13,13 @@ export function withAccount(path: string, account: string): string {
 export class AuthError extends Error {}
 
 function readCookie(name: string): string | null {
-  const match = document.cookie.match(
-    new RegExp(`(?:^|; )${name.replace(/([.$?*|{}()[\]\\/+^])/g, "\\$1")}=([^;]*)`),
-  );
-  return match ? decodeURIComponent(match[1]) : null;
+  const prefix = `${name}=`;
+  for (const part of document.cookie.split("; ")) {
+    if (part.startsWith(prefix)) {
+      return decodeURIComponent(part.slice(prefix.length));
+    }
+  }
+  return null;
 }
 
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);

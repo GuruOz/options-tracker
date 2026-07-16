@@ -1,0 +1,12 @@
+title = "options-tracker gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secrets"
+regexes = [
+  # gateway/conf.yaml sslPwd: IBKR's stock Client Portal Gateway keystore
+  # password, shipped in every IBEAM/CPG install — not a secret we control.
+  '''sslPwd: "mywebapi"''',
+]

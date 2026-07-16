@@ -9,7 +9,10 @@ COPY . .
 RUN npm run build
 
 # ---- serve static assets + reverse-proxy /api and /ws ----
-FROM nginx:1.27-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 8080 8443
+# Explicit even though the base image already defaults to this - documents
+# intent and satisfies Dockerfile scanners that don't resolve inherited USER.
+USER nginx

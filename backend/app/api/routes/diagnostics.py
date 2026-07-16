@@ -46,7 +46,7 @@ def _exec_dump(e) -> dict:
 
 @router.get("/diagnostics/executions")
 async def dump_executions(
-    include_raw: bool = True,
+    include_raw: bool = False,
     accounts: list[str] = Depends(account_scope),
     db: AsyncSession = Depends(get_session),
 ) -> dict:

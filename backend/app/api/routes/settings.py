@@ -10,7 +10,7 @@ Clients see one flat dict either way, so the shape callers already depend on
 (`data.underlyings`, `data.signal`, ...) is unchanged.
 """
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.defaults import DEFAULT_SETTINGS
@@ -20,6 +20,65 @@ from app.db.base import get_session
 from app.db.models import AccountSetting, Setting
 
 router = APIRouter(tags=["settings"])
+
+
+class UnderlyingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    conid: int
+    symbol: str
+    description: str = ""
+
+
+class WeightsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    iv_percentile: float = Field(ge=0, le=1)
+    variance_premium: float = Field(ge=0, le=1)
+    trend: float = Field(ge=0, le=1)
+    rsi_drawdown: float = Field(ge=0, le=1)
+
+
+class ThresholdsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    favorable: float = Field(ge=0, le=100)
+    selective: float = Field(ge=0, le=100)
+
+
+class SignalIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    weights: WeightsIn
+    thresholds: ThresholdsIn
+    variance_premium_full_spread: float = Field(ge=0, le=1)
+
+
+class AlertsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    take_profit_pct: float = Field(ge=0, le=1)
+    expiry_dte: int = Field(ge=0, le=60)
+    near_strike_cushion: float = Field(ge=0, le=1)
+
+
+class BsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    risk_free_rate: float = Field(ge=0, le=0.25)
+
+
+class RiskIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scenario_move: float = Field(ge=-1, le=0)
+    index_symbol: str = Field(min_length=1, max_length=12)
+    beta_map: dict[str, float]
+
+
+class SettingsIn(BaseModel):
+    """The full flat settings shape the UI reads from GET /settings and saves
+    back via PUT — see the module docstring. Mirrors DEFAULT_SETTINGS' keys
+    exactly so `model_dump()` round-trips the stored JSONB shape unchanged."""
+    model_config = ConfigDict(extra="forbid")
+    signal: SignalIn
+    alerts: AlertsIn
+    bs: BsIn
+    risk: RiskIn
+    underlyings: list[UnderlyingIn] = []
 
 # Keys that live on the account row rather than the global one.
 _PER_ACCOUNT_KEYS = ("underlyings", "alerts")
@@ -97,7 +156,7 @@ async def read_settings(
 
 @router.put("/settings")
 async def update_settings(
-    payload: dict,
+    payload: SettingsIn,
     account_id: str = Depends(single_account),
     db: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -105,21 +164,15 @@ async def update_settings(
     global_row = await _get_or_create_global(db)
     account_row = await _get_or_create_account(db, account_id)
 
-    global_row.data = {k: v for k, v in payload.items() if k not in _PER_ACCOUNT_KEYS}
+    data = payload.model_dump()
+    global_row.data = {k: v for k, v in data.items() if k not in _PER_ACCOUNT_KEYS}
     account_data = dict(account_row.data or {})
     for key in _PER_ACCOUNT_KEYS:
-        if key in payload:
-            account_data[key] = payload[key]
+        account_data[key] = data[key]
     account_row.data = account_data
 
     await db.commit()
     return _merge(global_row.data, account_row.data)
-
-
-class UnderlyingIn(BaseModel):
-    conid: int
-    symbol: str
-    description: str = ""
 
 
 @router.post("/settings/underlyings")

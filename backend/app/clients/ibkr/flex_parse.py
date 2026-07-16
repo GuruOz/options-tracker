@@ -5,9 +5,10 @@ Each trade is idempotently upserted into `executions` by exec_id.
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 from typing import Any
+
+import defusedxml.ElementTree as ET
 
 from app.core.occ import parse_occ_symbol
 

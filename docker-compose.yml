@@ -59,6 +59,26 @@ x-ibeam-env: &ibeam-env
   # IBEAM_KEY: ${IBEAM_KEY}
 
 services:
+  # Mediates Docker API access for the backend so it never holds the raw
+  # socket (root-equivalent on the host). Only the container list/inspect +
+  # start/stop/restart endpoints are allowed — everything else (images, exec,
+  # build, volumes, networks...) is denied by omission.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      POST: 1   # required alongside the ALLOW_* write endpoints below
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      ALLOW_RESTARTS: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-proxy-net]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+    mem_limit: 64m
+
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -76,6 +96,7 @@ services:
     networks: [internal]
     logging: *default-logging
     mem_limit: 512m
+    security_opt: ["no-new-privileges:true"]
     # Not published to the host. Uncomment for local DB debugging only:
     # ports: ["127.0.0.1:5432:5432"]
 
@@ -160,8 +181,9 @@ services:
       AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:-}
       AUTH_SESSION_TTL_HOURS: ${AUTH_SESSION_TTL_HOURS:-168}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      # Docker API access goes through docker-proxy, never the raw socket.
+      DOCKER_HOST: tcp://docker-proxy:2375
+      HOME: /tmp   # library caches (e.g. yfinance) need a writable HOME under the read-only rootfs
     depends_on:
       db:
         condition: service_healthy
@@ -169,15 +191,21 @@ services:
       # boot, which is a normal state the backend surfaces as DISCONNECTED.
       ibkr-gateway:
         condition: service_started
+      docker-proxy:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=3).status==200 else 1)\""]
       interval: 15s
       timeout: 5s
       retries: 10
       start_period: 30s
-    networks: [internal]
+    networks: [internal, docker-proxy-net]
     logging: *default-logging
     mem_limit: 768m
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
 
   frontend:
     build:
@@ -200,12 +228,23 @@ services:
     networks: [internal]
     logging: *default-logging
     mem_limit: 192m
+    read_only: true
+    # nginx-unprivileged runs as uid 101; default tmpfs mounts are root-owned
+    # (mode 755), so nginx can't write its pid/temp/log files without an
+    # explicit owner/mode here.
+    tmpfs:
+      - /tmp:uid=101,gid=101,mode=1777
+      - /var/cache/nginx:uid=101,gid=101,mode=1777
+      - /var/run:uid=101,gid=101,mode=1777
+      - /var/log/nginx:uid=101,gid=101,mode=1777
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
 
   # Nightly Postgres backup. Dumps a gzipped pg_dump into ./backups on the host
   # and prunes dumps older than BACKUP_KEEP_DAYS, so 24/7 history survives a lost
   # pgdata volume. Restore: gunzip -c backups/<file>.sql.gz | docker compose exec -T db psql -U options -d options
   db-backup:
-    image: postgres:16-alpine
+    build: ./backup
     restart: unless-stopped
     depends_on:
       db:
@@ -215,11 +254,15 @@ services:
       PGUSER: ${POSTGRES_USER:-options}
       PGPASSWORD: ${POSTGRES_PASSWORD:-options}
       PGDATABASE: ${POSTGRES_DB:-options}
+      # age public key (age1...) to encrypt backups with. Unset -> plaintext
+      # gzip, with a warning logged on every cycle. See .env.example.
+      AGE_RECIPIENT: ${AGE_RECIPIENT:-}
     volumes:
       - ./backups:/backups
     networks: [internal]
     logging: *default-logging
     mem_limit: 256m
+    security_opt: ["no-new-privileges:true"]
     entrypoint:
       - /bin/sh
       - -c
@@ -227,13 +270,21 @@ services:
         keep=${BACKUP_KEEP_DAYS:-7}; interval=${BACKUP_INTERVAL_SECONDS:-86400}
         echo "[db-backup] started; interval=$${interval}s keep=$${keep}d -> /backups"
         while true; do
-          ts=$$(date +%Y%m%d-%H%M%S); out="/backups/options-$$ts.sql.gz"
-          if pg_dump | gzip > "$$out"; then
+          ts=$$(date +%Y%m%d-%H%M%S)
+          if [ -n "$${AGE_RECIPIENT}" ]; then
+            out="/backups/options-$$ts.sql.gz.age"
+            ok=1; pg_dump | gzip | age -r "$${AGE_RECIPIENT}" > "$$out" || ok=0
+          else
+            out="/backups/options-$$ts.sql.gz"
+            echo "[db-backup] WARNING: AGE_RECIPIENT unset - writing UNENCRYPTED backup" >&2
+            ok=1; pg_dump | gzip > "$$out" || ok=0
+          fi
+          if [ "$$ok" = "1" ]; then
             echo "[db-backup] wrote $$out ($$(du -h "$$out" | cut -f1))"
           else
             echo "[db-backup] FAILED at $$ts" >&2; rm -f "$$out"
           fi
-          find /backups -name 'options-*.sql.gz' -mtime +$$keep -delete 2>/dev/null || true
+          find /backups -name 'options-*.sql.gz*' -mtime +$$keep -delete 2>/dev/null || true
           sleep "$$interval"
         done
 
@@ -255,3 +306,8 @@ volumes:
 networks:
   internal:
     driver: bridge
+  # Isolated from `internal` so only the backend can ever reach the Docker API
+  # proxy — the gateways and db never get a network route to it.
+  docker-proxy-net:
+    driver: bridge
+    internal: true
