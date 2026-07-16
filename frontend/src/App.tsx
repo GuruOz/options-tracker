@@ -3,8 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { getJSON } from "./api/client";
 import { useSession } from "./api/useSession";
 import { AccountProvider } from "./hooks/useAccount";
+import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { useTheme } from "./hooks/useTheme";
 import type { Meta } from "./api/types";
+import { LoginPage } from "./components/LoginPage";
 import { HeaderBar } from "./components/HeaderBar";
 import { UnderlyingsPanel } from "./components/UnderlyingsPanel";
 import { SignalPanel } from "./components/SignalPanel";
@@ -18,6 +20,26 @@ import { MarketContextPanel } from "./components/MarketContextPanel";
 
 export default function App() {
   return (
+    <AuthProvider>
+      <Gate />
+    </AuthProvider>
+  );
+}
+
+function Gate() {
+  const { status } = useAuth();
+
+  if (status === "loading") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <p className="text-sm text-slate-400 dark:text-slate-500">Loading…</p>
+      </div>
+    );
+  }
+  if (status === "anon") {
+    return <LoginPage />;
+  }
+  return (
     <AccountProvider>
       <Dashboard />
     </AccountProvider>
@@ -26,6 +48,7 @@ export default function App() {
 
 function Dashboard() {
   const sessions = useSession();
+  const { logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Which position the decay & profit panels chart; driven by clicking a row in PositionsPanel.
   const [selectedConid, setSelectedConid] = useState<number | null>(null);
@@ -43,13 +66,22 @@ function Dashboard() {
             Read-only options-selling dashboard{meta ? ` · v${meta.version}` : ""}
           </p>
         </div>
-        <button
-          onClick={toggleTheme}
-          className="rounded-lg bg-slate-200 p-2 text-slate-900 transition-colors hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
-          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-        >
-          {theme === "dark" ? "☀️" : "🌙"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleTheme}
+            className="rounded-lg bg-slate-200 p-2 text-slate-900 transition-colors hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+          <button
+            onClick={() => logout()}
+            className="rounded-lg bg-slate-200 px-3 py-2 text-xs font-semibold text-slate-900 transition-colors hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+            title="Log out"
+          >
+            Logout
+          </button>
+        </div>
       </header>
 
       <div className="mb-6">

@@ -7,11 +7,12 @@ entrypoint.sh before boot.
 """
 from __future__ import annotations
 
+import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
-from app.api import api_router
+from app.api import api_router, public_router
 from app.api.routes import ws
 from app.core.config import get_settings
 from app.core.constants import VERSION
@@ -80,5 +81,30 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="options-tracker", version=VERSION, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def access_log(request: Request, call_next):
+    # /api/health fires every 15s (compose healthcheck) — too noisy to log.
+    if request.url.path == "/api/health":
+        return await call_next(request)
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = round((time.monotonic() - start) * 1000, 1)
+    client_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+    log.info(
+        "http_request",
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        duration_ms=duration_ms,
+        client_ip=client_ip,
+    )
+    return response
+
+
+app.include_router(public_router, prefix="/api")
 app.include_router(api_router, prefix="/api")
 app.include_router(ws.router)  # /ws (same origin via nginx)

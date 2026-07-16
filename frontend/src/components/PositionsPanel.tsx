@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getJSON, withAccount } from "../api/client";
+import { getJSON, postForm, postJSON, withAccount } from "../api/client";
 import type { Position, RollChain, Trade } from "../api/types";
 import { ALL_ACCOUNTS, useAccount } from "../hooks/useAccount";
 // `chainLabel` ("NVDA 216P") and `money` live in ./ChainTimeline so the timeline
@@ -246,12 +246,11 @@ export function PositionsPanel({
                 try {
                   const form = new FormData();
                   form.append("file", file);
-                  const res = await fetch(withAccount("/api/trades/upload", selected), {
-                    method: "POST",
-                    body: form,
-                  });
-                  const json = await res.json();
-                  setUploadMsg(json.message ?? json.status);
+                  const json = await postForm<{ message?: string; status?: string }>(
+                    withAccount("/api/trades/upload", selected),
+                    form,
+                  );
+                  setUploadMsg(json.message ?? json.status ?? "Done.");
                   queryClient.invalidateQueries({ queryKey: ["trades", "options"] });
                   queryClient.invalidateQueries({ queryKey: ["chains"] });
                   queryClient.invalidateQueries({ queryKey: ["chains", "closed"] });
@@ -352,7 +351,7 @@ function ChainGroup({
   const handleClose = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm("Manually close this chain?")) return;
-    await fetch(`/api/chains/${chainId}/close`, { method: "POST" });
+    await postJSON(`/api/chains/${chainId}/close`, {});
     queryClient.invalidateQueries({ queryKey: ["positions"] });
     queryClient.invalidateQueries({ queryKey: ["chains"] });
     queryClient.invalidateQueries({ queryKey: ["chains", "closed"] });
@@ -360,11 +359,7 @@ function ChainGroup({
 
   const handleLink = async (execId: string) => {
     if (!execId) return;
-    await fetch(`/api/chains/${chainId}/link`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ exec_id: execId }),
-    });
+    await postJSON(`/api/chains/${chainId}/link`, { exec_id: execId });
     setLinking(false);
     queryClient.invalidateQueries({ queryKey: ["positions"] });
     queryClient.invalidateQueries({ queryKey: ["chains"] });

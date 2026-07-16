@@ -72,7 +72,14 @@ export function useSession(): SessionMap {
           /* ignore malformed frames */
         }
       };
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
+        if (ev.code === 4401) {
+          // Session cookie missing/expired — let useAuth's own 401 handling
+          // (via a REST call) drive the app back to the login screen; retrying
+          // this socket would just get rejected again in a loop.
+          window.dispatchEvent(new Event("auth:unauthorized"));
+          return;
+        }
         if (!closed) retry.current = window.setTimeout(connect, 3000);
       };
       ws.onerror = () => ws.close();
