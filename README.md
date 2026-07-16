@@ -24,7 +24,7 @@ between accounts or view them combined. See
 browser ──HTTPS──▶ nginx ──/api,/ws──▶ backend ──┬─▶ ibkr-gateway ──read-only──▶ IBKR
  (your machine)   (frontend)          (FastAPI)  ├─▶ PostgreSQL
                                                   ├─▶ Redis (optional)
-                                                  └─▶ Docker socket (restart gateway on demand)
+                                                  └─▶ docker-proxy ──▶ Docker socket (restart gateway on demand)
 ```
 
 Everything except the dashboard port runs on a **private Docker network**. The
@@ -49,16 +49,26 @@ with the market-data subscriptions you need (see below).
 cp .env.example .env
 # edit .env — at minimum IBEAM_ACCOUNT, IBEAM_PASSWORD, POSTGRES_PASSWORD
 
+# Generate a local CA + TLS certificate (the app only serves HTTPS):
+bash scripts/gen-certs.sh
+
+# Generate a login password hash and paste it into .env as AUTH_PASSWORD_HASH
+# (single-quote it — the hash contains `$` characters):
+docker compose build backend
+docker compose run --rm --no-deps --entrypoint python backend -m app.cli.hash_password
+
 docker compose up --build
 ```
 
-Then open **http://127.0.0.1:8080**.
+Then import `certs/ca.crt` into your browser/OS trust store (see
+[docs/SECURITY.md](docs/SECURITY.md) for per-platform instructions) and open
+**https://localhost:8443**. Log in with the username (`admin` by default) and
+password you just hashed.
 
-The dashboard starts unauthenticated — no session is held. Click **"Pull Fresh
-Data"** in the header bar when you want live data. The gateway will restart,
-trigger IBKR's 2FA push, and the session comes up once you approve the
-notification. See [IBKR session behaviour](#ibkr-session-behaviour) below for
-the full flow.
+Click **"Pull Fresh Data"** in the header bar when you want live IBKR data.
+The gateway will restart, trigger IBKR's 2FA push, and the session comes up
+once you approve the notification. See
+[IBKR session behaviour](#ibkr-session-behaviour) below for the full flow.
 
 **Paper vs. live** is chosen by which IBKR username you put in `IBEAM_ACCOUNT`.
 IBKR paper accounts have their own separate login. Validate with your paper
@@ -74,30 +84,36 @@ docker compose --profile redis up --build   # and set REDIS_URL in .env
 
 ## Network access (LAN / homelab)
 
-`frontend` is the only service that publishes a port. It binds **`0.0.0.0` by
-default** (`APP_BIND` in `.env`), so the dashboard is reachable from other
-devices on your network at **`http://<server-lan-ip>:8080`** (find the IP with
-`ip addr` / `ipconfig`). Nothing else needs to change — nginx accepts any host
-and proxies `/api` + `/ws` same-origin, so the live WebSocket works cross-device.
+`frontend` is the only service that publishes a port, and it's HTTPS-only. It
+binds **`127.0.0.1` by default** (`APP_BIND` in `.env`) — reachable only from
+the machine running it, at **https://localhost:8443**.
 
-To restrict it to the machine running it, set loopback and recreate the frontend:
+To reach it from other devices — another computer on your LAN, or over a VPN —
+bind a different interface and regenerate the TLS cert to cover it:
 
 ```bash
-APP_BIND=127.0.0.1
+APP_BIND=<lan-or-vpn-ip>
+EXTRA_SANS="IP:<lan-or-vpn-ip>" bash scripts/gen-certs.sh
 docker compose up -d frontend   # apply (frontend-only; does NOT log IBKR out)
 ```
 
-> ⚠️ **There is no built-in login.** Anyone who can reach the port can view your
-> positions/P&L and trigger an IBKR login (a 2FA push to your phone). So:
-> - Only bind `0.0.0.0` on a **trusted** home LAN.
-> - For access **away from home**, use a VPN or **Tailscale/WireGuard** — do
->   **not** port-forward this to the public internet.
-> - To add real auth, put a reverse proxy with HTTP basic-auth / an identity
->   proxy (e.g. Caddy, Authelia) in front of the frontend port.
+Then import `certs/ca.crt` into each device's trust store — see
+[docs/SECURITY.md](docs/SECURITY.md) for per-platform steps — and open
+`https://<lan-or-vpn-ip>:8443`.
 
-Firewall: allow inbound TCP on `APP_PORT` (8080) on the server. The gateway,
-backend, db, and backups stay on the private Docker network and are never
-published.
+> Every route requires the login you set up in Quick start (`AUTH_USERNAME` /
+> `AUTH_PASSWORD_HASH`), so a device on the same network still can't view your
+> positions or trigger an IBKR login without that password. Still:
+> - Prefer a VPN overlay (**Tailscale/WireGuard**) over binding your raw LAN
+>   interface for access away from home.
+> - **Never port-forward `APP_PORT` to the public internet.**
+> - See [docs/SECURITY.md](docs/SECURITY.md) for the full threat model,
+>   accepted-risk register, and security runbooks (password rotation, cert
+>   renewal, backup key rotation).
+
+Firewall: allow inbound TCP on `APP_PORT` (8443) on the server, if you've
+bound beyond loopback. The gateway, backend, db, docker-proxy, and backups
+stay on private Docker networks and are never published.
 
 ---
 
@@ -267,14 +283,26 @@ docker compose up -d --build          # rebuilds backend/frontend; DB migrations
 ## Security & privacy model
 
 - IBKR credentials live only in `.env` / Docker secrets and are git-ignored.
-- The gateway, database, and Redis are **never published to the host's public
-  interface** — only `frontend` binds a port, on loopback (`127.0.0.1`) by default.
+- The dashboard is TLS-only and gated by a login (single shared account per
+  household) — see [Quick start](#quick-start) to set the password.
+- The gateway, database, docker-proxy, and Redis are **never published to the
+  host's public interface** — only `frontend` binds a port, on loopback
+  (`127.0.0.1`) by default.
+- The backend never holds the raw Docker socket — a `docker-proxy` service
+  mediates it, allowed only to list/inspect/start/stop/restart containers.
+  Backend and frontend containers run as non-root with a read-only root
+  filesystem and all Linux capabilities dropped.
 - The backend is **read-only to IBKR**: the API client exposes no order or
   funds-transfer endpoints.
 - **No third-party servers, no telemetry.** All data stays in your stack.
 - The gateway uses a self-signed cert on the internal network; verification is
   off by default (`IBKR_GATEWAY_VERIFY=false`) because that network is private.
   To harden, mount the gateway cert and point `IBKR_GATEWAY_VERIFY` at it.
+- Automated DB backups can be encrypted at rest with [age](https://age-encryption.org)
+  (`AGE_RECIPIENT` in `.env.example`).
+
+See [docs/SECURITY.md](docs/SECURITY.md) for the full threat model,
+accepted-risk register, and operational runbooks (password/cert/key rotation).
 
 ---
 

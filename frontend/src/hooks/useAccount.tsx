@@ -45,7 +45,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     queryKey: ["accounts"],
     queryFn: () => getJSON<AccountInfo[]>("/api/accounts"),
   });
-  const accounts = accountsData ?? [];
+  const accounts = useMemo(() => accountsData ?? [], [accountsData]);
 
   const setSelected = useCallback((a: AccountSelection) => {
     setPreference(a);

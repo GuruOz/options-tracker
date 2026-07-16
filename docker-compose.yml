@@ -244,7 +244,7 @@ services:
   # and prunes dumps older than BACKUP_KEEP_DAYS, so 24/7 history survives a lost
   # pgdata volume. Restore: gunzip -c backups/<file>.sql.gz | docker compose exec -T db psql -U options -d options
   db-backup:
-    image: postgres:16-alpine
+    build: ./backup
     restart: unless-stopped
     depends_on:
       db:
@@ -254,6 +254,9 @@ services:
       PGUSER: ${POSTGRES_USER:-options}
       PGPASSWORD: ${POSTGRES_PASSWORD:-options}
       PGDATABASE: ${POSTGRES_DB:-options}
+      # age public key (age1...) to encrypt backups with. Unset -> plaintext
+      # gzip, with a warning logged on every cycle. See .env.example.
+      AGE_RECIPIENT: ${AGE_RECIPIENT:-}
     volumes:
       - ./backups:/backups
     networks: [internal]
@@ -267,13 +270,21 @@ services:
         keep=${BACKUP_KEEP_DAYS:-7}; interval=${BACKUP_INTERVAL_SECONDS:-86400}
         echo "[db-backup] started; interval=$${interval}s keep=$${keep}d -> /backups"
         while true; do
-          ts=$$(date +%Y%m%d-%H%M%S); out="/backups/options-$$ts.sql.gz"
-          if pg_dump | gzip > "$$out"; then
+          ts=$$(date +%Y%m%d-%H%M%S)
+          if [ -n "$${AGE_RECIPIENT}" ]; then
+            out="/backups/options-$$ts.sql.gz.age"
+            ok=1; pg_dump | gzip | age -r "$${AGE_RECIPIENT}" > "$$out" || ok=0
+          else
+            out="/backups/options-$$ts.sql.gz"
+            echo "[db-backup] WARNING: AGE_RECIPIENT unset - writing UNENCRYPTED backup" >&2
+            ok=1; pg_dump | gzip > "$$out" || ok=0
+          fi
+          if [ "$$ok" = "1" ]; then
             echo "[db-backup] wrote $$out ($$(du -h "$$out" | cut -f1))"
           else
             echo "[db-backup] FAILED at $$ts" >&2; rm -f "$$out"
           fi
-          find /backups -name 'options-*.sql.gz' -mtime +$$keep -delete 2>/dev/null || true
+          find /backups -name 'options-*.sql.gz*' -mtime +$$keep -delete 2>/dev/null || true
           sleep "$$interval"
         done
 
