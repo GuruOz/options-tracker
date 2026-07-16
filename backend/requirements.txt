@@ -21,5 +21,5 @@ defusedxml==0.7.1
 # Transitive deps pinned because the analytics rely on them directly (Black-
 # Scholes / market history) and yfinance's resolver can otherwise drift them.
 pandas==3.0.3
-numpy==2.5.0
+numpy==2.5.1
 websockets==16.0
