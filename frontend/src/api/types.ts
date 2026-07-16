@@ -6,6 +6,8 @@ export type GatewayStatus =
   | "logging_in";
 
 export interface SessionState {
+  gateway_id: string;
+  label: string;
   status: GatewayStatus;
   authenticated: boolean;
   connected: boolean;
@@ -17,6 +19,26 @@ export interface SessionState {
   last_pull: string | null;
   pull_source: string | null;
   login_requested_at: string | null;
+}
+
+/** Every declared user's session, keyed by gateway id ("user1", "user2", ...). */
+export type SessionMap = Record<string, SessionState>;
+
+/** An account plus its latest summary — one entry per user in the switcher. */
+export interface AccountInfo {
+  account_id: string;
+  label: string;
+  base_currency: string | null;
+  gateway_id: string | null;
+  snapshot_ts: string | null;
+  net_liquidation: number | null;
+  available_funds: number | null;
+  excess_liquidity: number | null;
+  maintenance_margin: number | null;
+  buying_power: number | null;
+  cash: number | null;
+  leverage: number | null;
+  source: string | null;
 }
 
 export interface Meta {
@@ -62,6 +84,9 @@ export interface Position {
   chain_id: string | null;
   source: string | null;
   last_updated: string | null;
+  // Which user owns this row — the combined view mixes accounts.
+  account_id: string | null;
+  account_label: string | null;
 }
 
 export interface DecayPoint {
@@ -167,6 +192,8 @@ export interface Trade {
   price: number | null;
   commission: number | null;
   exec_time: string | null;
+  account_id: string | null;
+  account_label: string | null;
 }
 
 export interface RiskPosition {
@@ -225,6 +252,8 @@ export interface RollChain {
   leg_count: number;
   conids: number[];
   legs?: RollChainLeg[];
+  account_id?: string;
+  account_label?: string;
 }
 
 export interface Risk {
@@ -238,6 +267,10 @@ export interface Risk {
   assignment: Assignment;
   positions: RiskPosition[];
   equity_curve: EquityPoint[];
+  // Present only in the combined view: each account's own risk, since equity
+  // curves can't be summed (their snapshots land on different timestamps) and
+  // assignment coverage pools cash that isn't fungible across accounts.
+  per_account?: (Risk & { account_id: string; account_label: string })[];
 }
 
 export interface IncomeMonth {
@@ -270,4 +303,8 @@ export interface Income {
   open_count: number;
   net_liquidation: number | null;
   yield_pct: number | null;
+  // Present only in the combined view. The derived P&L sums across accounts,
+  // but the manual overlay (cashed out / withdrawal / note) belongs to one
+  // account, so it is carried per account instead of merged.
+  by_account?: (Income & { account_id: string; account_label: string })[];
 }

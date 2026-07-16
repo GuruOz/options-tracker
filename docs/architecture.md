@@ -178,9 +178,14 @@ Data jobs run in two phases (see `poller/scheduler.py`). They self-skip until
 | `signal_history` | Composite score + sub-scores + inputs + weights per underlying per poll |
 | `roll_chains` | One row per option position lifecycle; `chain_id` (unique), `status` (open/closed), `cumulative_credit` |
 | `roll_chain_legs` | Individual executions grouped into chains; unique on `(chain_id, exec_id)`; `role` = open/close |
-| `settings` | Single row (id=1); JSONB blob with signal weights, alert thresholds, beta map, `underlyings` list |
+| `settings` | Single row (id=1); JSONB blob with the *global* signal weights, BS rate, and risk beta map |
+| `account_settings` | One row per account; JSONB blob with that account's `underlyings` watchlist and `alerts` thresholds |
 
-All tables carry `account_id` FKs for future multi-account support.
+All history tables carry `account_id` FKs, and multi-user is live: one
+`GatewayRuntime`/`SessionState` per declared user (`core/gateways.py`,
+`core/state.py`), one IBEAM container per user, and API routes take
+`?account_id=<id>|all` (see `api/deps.py`). See README § Multi-user (household)
+setup.
 
 ---
 

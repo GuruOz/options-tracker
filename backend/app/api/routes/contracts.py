@@ -1,18 +1,23 @@
 """Contract search — proxies secdef/search so the UI can look up conids by ticker."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 
-from app.clients.ibkr import IBKRAuthError, IBKRClient, IBKRError
+from app.clients.ibkr import IBKRAuthError, IBKRError
+from app.core.gateways import any_authenticated_client
 
 router = APIRouter(tags=["contracts"])
 
 
 @router.get("/contracts/search")
-async def search_contracts(q: str, request: Request) -> list[dict]:
+async def search_contracts(q: str) -> list[dict]:
     if not q or len(q.strip()) < 1:
         return []
-    client: IBKRClient = request.app.state.ibkr
+    # The contract database is the same whoever asks, so any logged-in user's
+    # gateway can answer — the searcher needn't be logged in themselves.
+    client = any_authenticated_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="No IBKR session authenticated")
     try:
         results = await client.secdef_search(q.strip().upper())
     except IBKRAuthError:

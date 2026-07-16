@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getJSON } from "../api/client";
+import { getJSON, withAccount } from "../api/client";
 import type { Position, RollChain } from "../api/types";
+import { useAccount } from "../hooks/useAccount";
 import { ChainTimeline, chainLabel, money, isAssignedOpenChain } from "./ChainTimeline";
 
 function AssignmentAlert({ chain, onOpen }: { chain: RollChain; onOpen: () => void }) {
@@ -99,14 +100,15 @@ function AlertItem({ position }: { position: Position }) {
 
 export function AlertsPanel() {
   const [timelineChain, setTimelineChain] = useState<RollChain | null>(null);
+  const { selected } = useAccount();
 
   const { data } = useQuery({
-    queryKey: ["alerts"],
-    queryFn: () => getJSON<Position[]>("/api/alerts"),
+    queryKey: ["alerts", selected],
+    queryFn: () => getJSON<Position[]>(withAccount("/api/alerts", selected)),
   });
   const { data: chains } = useQuery({
-    queryKey: ["chains"],
-    queryFn: () => getJSON<RollChain[]>("/api/chains?status=open"),
+    queryKey: ["chains", selected],
+    queryFn: () => getJSON<RollChain[]>(withAccount("/api/chains?status=open", selected)),
   });
 
   const alerts = data ?? [];

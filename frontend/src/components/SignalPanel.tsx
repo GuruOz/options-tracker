@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { getJSON } from "../api/client";
+import { getJSON, withAccount } from "../api/client";
 import type { Signal, SignalPoint, SignalSubScores } from "../api/types";
+import { useAccount } from "../hooks/useAccount";
 
 const VERDICT: Record<string, { bar: string; pill: string }> = {
   FAVORABLE: { bar: "bg-emerald-500", pill: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300" },
@@ -56,9 +57,10 @@ function ScoreHistory({ conid }: { conid: number }) {
 }
 
 export function SignalPanel() {
+  const { selected } = useAccount();
   const { data } = useQuery({
-    queryKey: ["signals"],
-    queryFn: () => getJSON<Signal[]>("/api/signals"),
+    queryKey: ["signals", selected],
+    queryFn: () => getJSON<Signal[]>(withAccount("/api/signals", selected)),
   });
   const rows = data ?? [];
 

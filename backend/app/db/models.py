@@ -326,11 +326,37 @@ class IncomeAdjustment(Base):
 
 
 class Setting(Base):
-    """Single-row JSON blob of user-configurable settings (id is always 1)."""
+    """Single-row JSON blob of market-wide settings (id is always 1).
+
+    Holds only what is genuinely shared across accounts: signal weights (they
+    produce the one conid-keyed `signal_history` every user reads), the
+    Black-Scholes fallback rate, and the risk beta map / scenario. Per-user keys
+    (`underlyings`, `alerts`) live in `AccountSetting`.
+    """
 
     __tablename__ = "settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    data: Mapped[dict] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AccountSetting(Base):
+    """Per-account settings: the tracked-underlying watchlist + alert thresholds.
+
+    Each user curates their own watchlist and tunes their own take-profit /
+    expiry / cushion thresholds. The market poller fetches the *union* of every
+    account's watchlist, since the resulting market data is conid-keyed and
+    shared by everyone.
+    """
+
+    __tablename__ = "account_settings"
+
+    account_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("accounts.account_id"), primary_key=True
+    )
     data: Mapped[dict] = mapped_column(JSONB)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

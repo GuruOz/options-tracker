@@ -2,30 +2,41 @@
 
 Each run appends a fresh batch sharing one `snapshot_ts`, so the latest batch is
 the current portfolio and the history is preserved for roll-chain reconstruction.
+Each logged-in user's gateway is polled independently.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.clients.ibkr import IBKRAuthError, IBKRClient, IBKRError
+from app.clients.ibkr import IBKRAuthError, IBKRError
 from app.clients.ibkr.normalize import normalize_position, parse_snapshot_row
+from app.core.gateways import GatewayRuntime, active_runtimes
 from app.core.logging import get_logger
-from app.core.state import broadcast_event, session_state
+from app.core.state import broadcast_event
 from app.db.base import AsyncSessionLocal
 from app.db.models import PositionSnapshot
 
 log = get_logger("poller.positions")
 
 
-async def poll_positions(client: IBKRClient) -> None:
-    if not (session_state.user_logged_in and session_state.account_id):
-        return
-    account_id = session_state.account_id
+async def poll_positions() -> None:
+    for runtime in active_runtimes():
+        try:
+            await _poll_positions_one(runtime)
+        except Exception as exc:
+            log.warning(
+                "positions_poll_failed", gateway=runtime.gateway_id, error=str(exc)
+            )
+
+
+async def _poll_positions_one(runtime: GatewayRuntime) -> None:
+    client = runtime.client
+    account_id = runtime.state.account_id
 
     try:
         raw_positions = await client.all_positions(account_id)
     except (IBKRAuthError, IBKRError) as exc:
-        log.warning("positions_fetch_failed", error=str(exc))
+        log.warning("positions_fetch_failed", gateway=runtime.gateway_id, error=str(exc))
         return
 
     normalized = [normalize_position(p) for p in raw_positions]
@@ -45,7 +56,7 @@ async def poll_positions(client: IBKRClient) -> None:
                 if conid is not None:
                     greeks[int(conid)] = parse_snapshot_row(row)
         except (IBKRAuthError, IBKRError) as exc:
-            log.warning("greeks_fetch_failed", error=str(exc))
+            log.warning("greeks_fetch_failed", gateway=runtime.gateway_id, error=str(exc))
 
     ts = datetime.now(timezone.utc)
     objs: list[PositionSnapshot] = []
@@ -85,5 +96,8 @@ async def poll_positions(client: IBKRClient) -> None:
     async with AsyncSessionLocal() as session:
         session.add_all(objs)
         await session.commit()
-    log.info("positions_snapshot", count=len(objs), options=len(option_conids))
-    await broadcast_event("positions")
+    log.info(
+        "positions_snapshot", gateway=runtime.gateway_id,
+        count=len(objs), options=len(option_conids),
+    )
+    await broadcast_event("positions", account_id)

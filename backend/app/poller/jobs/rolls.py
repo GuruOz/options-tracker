@@ -9,9 +9,8 @@ from __future__ import annotations
 from sqlalchemy import delete, select
 
 from app.analytics.rolls import build_roll_chains
-from app.clients.ibkr import IBKRClient
 from app.core.logging import get_logger
-from app.core.state import broadcast_event, session_state
+from app.core.state import broadcast_event
 from app.db import repo
 from app.db.base import AsyncSessionLocal
 from app.db.models import ChainAdjustment, Execution, RollChain, RollChainLeg
@@ -19,12 +18,24 @@ from app.db.models import ChainAdjustment, Execution, RollChain, RollChainLeg
 log = get_logger("poller.rolls")
 
 
-async def build_rolls(client: IBKRClient) -> None:  # noqa: ARG001 — client kept for scheduler interface
-    """Rebuild all chains from executions."""
-    if not session_state.account_id:
-        return
-    account_id = session_state.account_id
+async def build_rolls() -> None:
+    """Rebuild every known account's chains from its executions.
 
+    Deliberately keyed off the `accounts` table rather than the logged-in
+    sessions: chains are built from stored executions, so a CSV upload or Flex
+    import for a user who is currently logged out must still rebuild.
+    """
+    async with AsyncSessionLocal() as session:
+        account_ids = await repo.all_account_ids(session)
+
+    for account_id in account_ids:
+        try:
+            await _build_rolls_one(account_id)
+        except Exception as exc:
+            log.warning("roll_build_failed", account=account_id, error=str(exc))
+
+
+async def _build_rolls_one(account_id: str) -> None:
     # Collapse cross-source duplicate fills (live poll vs Flex/CSV) before
     # building, so a fill reported by both feeds isn't double-counted and
     # doesn't spawn a phantom strike-0 chain. The poll feed won't re-add these
@@ -33,7 +44,7 @@ async def build_rolls(client: IBKRClient) -> None:  # noqa: ARG001 — client ke
         removed = await repo.dedupe_executions(session, account_id)
         if removed:
             await session.commit()
-            log.info("poll_duplicates_superseded", count=removed)
+            log.info("poll_duplicates_superseded", account=account_id, count=removed)
 
     async with AsyncSessionLocal() as session:
         # Load all executions
@@ -139,5 +150,8 @@ async def build_rolls(client: IBKRClient) -> None:  # noqa: ARG001 — client ke
 
         await session.commit()
 
-    log.info("roll_chains_rebuilt", chains=len(chains_data), legs=len(legs_data))
-    await broadcast_event("positions")
+    log.info(
+        "roll_chains_rebuilt", account=account_id,
+        chains=len(chains_data), legs=len(legs_data),
+    )
+    await broadcast_event("positions", account_id)

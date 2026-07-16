@@ -5,8 +5,15 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from app.analytics.decay import theta_decay_curve
+from app.analytics.defaults import DEFAULT_SETTINGS
 from app.db.models import PositionSnapshot, MarketSnapshot
 from app.schemas.responses import PositionOut
+
+# WATCH sits a fixed fraction short of the hard thresholds: with the default
+# 70% take-profit and 3% cushion this reproduces the long-standing 65% / 5%
+# tiers, and it keeps that relationship if a user retunes their thresholds.
+_WATCH_CAPTURE_RATIO = 0.65 / 0.70
+_WATCH_CUSHION_RATIO = 0.05 / 0.03
 
 
 def get_intrinsic_value(right: str | None, strike: float | None, underlying_price: float | None) -> float:
@@ -26,10 +33,24 @@ def enrich_positions(
     positions: list[PositionSnapshot],
     markets: list[MarketSnapshot],
     roll_chains: dict[int, dict],
+    alerts: dict | None = None,
 ) -> list[PositionOut]:
     """`roll_chains`: conid -> its open chain's id and cycle economics
     (see `repo.open_roll_chains`). Positions outside a chain get leg-level
-    metrics only."""
+    metrics only.
+
+    `alerts`: the owning account's thresholds (`take_profit_pct`, `expiry_dte`,
+    `near_strike_cushion`); defaults are used for any key left unset.
+    """
+    thresholds = {**DEFAULT_SETTINGS["alerts"], **(alerts or {})}
+    take_profit = float(thresholds["take_profit_pct"])
+    expiry_dte = int(thresholds["expiry_dte"])
+    cushion_floor = float(thresholds["near_strike_cushion"])
+    # The softer WATCH tier trails the hard thresholds, so a position drifting
+    # toward one stays visible instead of appearing only once it trips.
+    watch_capture = take_profit * _WATCH_CAPTURE_RATIO
+    watch_cushion = cushion_floor * _WATCH_CUSHION_RATIO
+
     market_by_symbol = {m.symbol: m for m in markets if m.symbol}
     today = datetime.now(timezone.utc).date()
 
@@ -196,13 +217,15 @@ def enrich_positions(
         cush = data["cushion_pct"]
         dte = data["dte"]
         status = "OPEN"
-        if cap is not None and cap >= 0.7:
+        if cap is not None and cap >= take_profit:
             status = "TAKE PROFIT"
-        elif cush is not None and cush < 0.03:
+        elif cush is not None and cush < cushion_floor:
             status = "AT RISK"
-        elif dte is not None and dte <= 2:
+        elif dte is not None and dte <= expiry_dte:
             status = "EXPIRING"
-        elif (cap is not None and cap >= 0.65) or (cush is not None and cush < 0.05):
+        elif (cap is not None and cap >= watch_capture) or (
+            cush is not None and cush < watch_cushion
+        ):
             status = "WATCH"
 
         data["status"] = status

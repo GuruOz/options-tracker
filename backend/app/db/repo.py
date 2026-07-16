@@ -16,6 +16,8 @@ from app.analytics.dedup import (
 from app.analytics.rolls import _credit
 from app.core.occ import parse_occ_symbol
 from app.db.models import (
+    Account,
+    AccountSetting,
     AccountSnapshot,
     DailyBar,
     Execution,
@@ -29,6 +31,47 @@ from app.db.models import (
 def _f(v) -> float | None:
     """Money columns read back as Decimal; the API speaks float."""
     return float(v) if v is not None else None
+
+
+async def all_accounts(db: AsyncSession) -> list[Account]:
+    """Every known account, oldest first — the switcher's source of truth."""
+    rows = await db.execute(select(Account).order_by(Account.first_seen, Account.id))
+    return list(rows.scalars().all())
+
+
+async def all_account_ids(db: AsyncSession) -> list[str]:
+    rows = await db.execute(
+        select(Account.account_id).order_by(Account.first_seen, Account.id)
+    )
+    return [r for (r,) in rows.all()]
+
+
+async def account_by_id(db: AsyncSession, account_id: str) -> Account | None:
+    rows = await db.execute(select(Account).where(Account.account_id == account_id))
+    return rows.scalar_one_or_none()
+
+
+async def account_labels(db: AsyncSession) -> dict[str, str]:
+    """`{account_id: label}`, falling back to the id when a label is unset."""
+    rows = await db.execute(select(Account.account_id, Account.label))
+    return {aid: (label or aid) for aid, label in rows.all()}
+
+
+async def account_settings(db: AsyncSession, account_id: str) -> AccountSetting | None:
+    return await db.get(AccountSetting, account_id)
+
+
+async def chain_exists(db: AsyncSession, chain_id: str) -> bool:
+    from app.db.models import RollChain
+    rows = await db.execute(
+        select(RollChain.chain_id).where(RollChain.chain_id == chain_id).limit(1)
+    )
+    return rows.scalar_one_or_none() is not None
+
+
+async def all_account_settings(db: AsyncSession) -> list[AccountSetting]:
+    rows = await db.execute(select(AccountSetting))
+    return list(rows.scalars().all())
 
 
 async def latest_positions(db: AsyncSession, account_id: str) -> list[PositionSnapshot]:

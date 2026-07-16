@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { getJSON, deleteJSON, postJSON } from "../api/client";
+import { getJSON, deleteJSON, postJSON, withAccount } from "../api/client";
 import type { ContractResult } from "../api/types";
+import { useAccount } from "../hooks/useAccount";
 
 interface Underlying {
   conid: number;
@@ -24,6 +25,7 @@ function useDebounce(value: string, ms: number) {
 
 export function UnderlyingsPanel() {
   const qc = useQueryClient();
+  const { selected, isAll } = useAccount();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const debouncedQ = useDebounce(query, 300);
@@ -31,8 +33,8 @@ export function UnderlyingsPanel() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const { data: settings } = useQuery({
-    queryKey: ["settings"],
-    queryFn: () => getJSON<Settings>("/api/settings"),
+    queryKey: ["settings", selected],
+    queryFn: () => getJSON<Settings>(withAccount("/api/settings", selected)),
   });
 
   const { data: searchResults = [], isFetching: searching } = useQuery({
@@ -48,7 +50,7 @@ export function UnderlyingsPanel() {
 
   const addMutation = useMutation({
     mutationFn: (u: ContractResult) =>
-      postJSON("/api/settings/underlyings", u),
+      postJSON(withAccount("/api/settings/underlyings", selected), u),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
       setQuery("");
@@ -58,7 +60,7 @@ export function UnderlyingsPanel() {
 
   const removeMutation = useMutation({
     mutationFn: (conid: number) =>
-      deleteJSON(`/api/settings/underlyings/${conid}`),
+      deleteJSON(withAccount(`/api/settings/underlyings/${conid}`, selected)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
   });
 
@@ -83,12 +85,16 @@ export function UnderlyingsPanel() {
   return (
     <section className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-        <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 shrink-0">Tracked underlyings</p>
+        <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 shrink-0">
+          Tracked underlyings{isAll ? " — union of all accounts" : ""}
+        </p>
 
         {/* Current tracked list */}
         <div className="flex flex-wrap gap-2">
           {tracked.length === 0 && (
-            <span className="text-xs text-slate-400 dark:text-slate-500 italic">None — add a ticker below</span>
+            <span className="text-xs text-slate-400 dark:text-slate-500 italic">
+              {isAll ? "No one is tracking anything yet." : "None — add a ticker below"}
+            </span>
           )}
           {tracked.map((u) => (
             <span
@@ -96,19 +102,26 @@ export function UnderlyingsPanel() {
               className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200"
             >
               {u.symbol}
-              <button
-                onClick={() => removeMutation.mutate(u.conid)}
-                disabled={removeMutation.isPending}
-                aria-label={`Remove ${u.symbol}`}
-                className="ml-0.5 text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 leading-none"
-              >
-                ×
-              </button>
+              {!isAll && (
+                <button
+                  onClick={() => removeMutation.mutate(u.conid)}
+                  disabled={removeMutation.isPending}
+                  aria-label={`Remove ${u.symbol}`}
+                  className="ml-0.5 text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 leading-none"
+                >
+                  ×
+                </button>
+              )}
             </span>
           ))}
         </div>
 
-        {/* Search box */}
+        {/* Search box — editing only makes sense for one account at a time */}
+        {isAll ? (
+          <span className="ml-auto text-xs text-slate-400 dark:text-slate-500">
+            Pick a specific account to edit.
+          </span>
+        ) : (
         <div className="relative ml-auto">
           <input
             ref={inputRef}
@@ -158,6 +171,7 @@ export function UnderlyingsPanel() {
             </div>
           )}
         </div>
+        )}
       </div>
     </section>
   );

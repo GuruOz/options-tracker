@@ -1,38 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { SessionState } from "./types";
+import type { SessionMap, SessionState } from "./types";
 import { getJSON } from "./client";
-
-const INITIAL: SessionState = {
-  status: "unknown",
-  authenticated: false,
-  connected: false,
-  competing: false,
-  account_id: null,
-  message: "Connecting…",
-  last_checked: null,
-  user_logged_in: false,
-  last_pull: null,
-  pull_source: null,
-  login_requested_at: null,
-};
 
 function wsUrl(): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${window.location.host}/ws`;
 }
 
-/** Live gateway/session state: seeded by REST, kept fresh over WebSocket. */
-export function useSession(): SessionState {
-  const [state, setState] = useState<SessionState>(INITIAL);
+/** Live per-user session state: seeded by REST, kept fresh over WebSocket.
+ *
+ * Keyed by gateway id, one entry per declared user. Each user's gateway
+ * authenticates, pulls and disconnects independently of the others. */
+export function useSession(): SessionMap {
+  const [sessions, setSessions] = useState<SessionMap>({});
   const retry = useRef<number | undefined>(undefined);
   const queryClient = useQueryClient();
 
   useEffect(() => {
     let closed = false;
 
-    getJSON<SessionState>("/api/session")
-      .then(setState)
+    getJSON<SessionMap>("/api/session")
+      .then(setSessions)
       .catch(() => {});
 
     function connect() {
@@ -40,10 +29,19 @@ export function useSession(): SessionState {
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
-          if (msg.type === "session") {
-            setState(msg.data as SessionState);
+          if (msg.type === "sessions") {
+            // Full snapshot, sent on connect.
+            setSessions(msg.data as SessionMap);
+          } else if (msg.type === "session" && msg.gateway_id) {
+            // One user's state changed — leave the others untouched.
+            setSessions((prev) => ({
+              ...prev,
+              [msg.gateway_id]: msg.data as SessionState,
+            }));
           } else if (msg.type === "data" && msg.resource) {
-            // A poll persisted new data — refetch the matching query.
+            // A poll persisted new data — refetch the matching query. Keys are
+            // ["resource", account], so a prefix match invalidates every
+            // account's variant, including the combined view that includes it.
             queryClient.invalidateQueries({ queryKey: [msg.resource] });
             // Derived views are recomputed server-side from these resources.
             if (msg.resource === "positions" || msg.resource === "market") {
@@ -65,6 +63,10 @@ export function useSession(): SessionState {
             ) {
               queryClient.invalidateQueries({ queryKey: ["risk"] });
             }
+            if (msg.resource === "account") {
+              // The switcher's per-user tiles read the accounts list.
+              queryClient.invalidateQueries({ queryKey: ["accounts"] });
+            }
           }
         } catch {
           /* ignore malformed frames */
@@ -83,5 +85,5 @@ export function useSession(): SessionState {
     };
   }, [queryClient]);
 
-  return state;
+  return sessions;
 }
