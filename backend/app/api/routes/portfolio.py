@@ -233,7 +233,17 @@ async def upload_trades(
     if not file.filename or not file.filename.lower().endswith(".csv"):
         return {"status": "error", "message": "Please upload a .csv file."}
 
-    content = await file.read()
+    # Defense-in-depth behind nginx's client_max_body_size 10m.
+    _MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(1024 * 1024):
+        total += len(chunk)
+        if total > _MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="CSV too large (10 MB max).")
+        chunks.append(chunk)
+    content = b"".join(chunks)
+
     from app.clients.ibkr.csv_import import parse_ibkr_csv
     trades = parse_ibkr_csv(content, account_id)
     if not trades:

@@ -18,5 +18,7 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY . .
 RUN chmod +x entrypoint.sh
+RUN useradd --uid 10001 --no-create-home appuser
+USER appuser
 EXPOSE 8000
 ENTRYPOINT ["./entrypoint.sh"]

@@ -1,4 +1,7 @@
+import asyncio
 import hashlib
+import re
+import time
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,6 +24,26 @@ router = APIRouter(tags=["market"])
 _SMA_WINDOW = 50
 _SMA_200 = 200
 
+# IBKR/yfinance tickers: letters, digits, and the handful of punctuation marks
+# real symbols use (BRK.B, ^VIX, EURUSD=X). Guards both the on-demand yfinance
+# fetch and cached-DB reads against being used as an injection vector.
+_SYMBOL_RE = re.compile(r"^[A-Z0-9.\-^=]{1,12}$")
+
+
+def validate_symbol(symbol: str) -> str:
+    symbol = symbol.strip().upper()
+    if not _SYMBOL_RE.match(symbol):
+        raise HTTPException(status_code=400, detail=f"Invalid symbol '{symbol}'.")
+    return symbol
+
+
+# Throttle on-demand yfinance fetches: skip a re-fetch of the same symbol
+# within this window, and cap how many fetches can run concurrently so a burst
+# of unique symbols can't stall the event loop or hammer Yahoo's endpoint.
+_YF_REFETCH_SECONDS = 600
+_yf_last_fetch: dict[str, float] = {}
+_yf_semaphore = asyncio.Semaphore(2)
+
 
 def _synthetic_conid(symbol: str) -> int:
     """Stable negative int for symbols without an IBKR conid (yfinance-only)."""
@@ -28,33 +51,49 @@ def _synthetic_conid(symbol: str) -> int:
     return -(digest % (10**9) + 2)  # always negative, never -1 (VIX) or 0
 
 
+def _fetch_yf_history_sync(symbol: str) -> list[dict]:
+    """Blocking yfinance call — always run this via asyncio.to_thread."""
+    import pandas as pd
+    import yfinance as yf
+
+    hist = yf.Ticker(symbol).history(period="2y")
+    if hist.empty:
+        return []
+    conid = _synthetic_conid(symbol)
+    rows = []
+    for ts, close in zip(hist.index, hist["Close"]):
+        if close is None or pd.isna(close):
+            continue
+        try:
+            d = ts.date()
+        except Exception:
+            continue
+        rows.append({
+            "conid": conid, "symbol": symbol.upper(), "bar_date": d,
+            "close": float(close), "is_vix": False, "source": "public",
+        })
+    return rows
+
+
 async def _fetch_yf_bars(symbol: str) -> list[dict]:
-    """Fetch 2 years of daily closes from yfinance for an arbitrary symbol."""
-    try:
-        import pandas as pd
-        import yfinance as yf
-    except ImportError:
+    """Fetch 2 years of daily closes from yfinance for an arbitrary symbol.
+
+    Throttled to one fetch per symbol per _YF_REFETCH_SECONDS and at most 2
+    concurrent fetches — a burst of distinct on-demand symbols must not stall
+    the event loop or hammer Yahoo's endpoint.
+    """
+    now = time.monotonic()
+    last = _yf_last_fetch.get(symbol)
+    if last is not None and now - last < _YF_REFETCH_SECONDS:
         return []
-    try:
-        hist = yf.Ticker(symbol).history(period="2y")
-        if hist.empty:
+    async with _yf_semaphore:
+        _yf_last_fetch[symbol] = time.monotonic()
+        try:
+            return await asyncio.to_thread(_fetch_yf_history_sync, symbol)
+        except ImportError:
             return []
-        conid = _synthetic_conid(symbol)
-        rows = []
-        for ts, close in zip(hist.index, hist["Close"]):
-            if close is None or pd.isna(close):
-                continue
-            try:
-                d = ts.date()
-            except Exception:
-                continue
-            rows.append({
-                "conid": conid, "symbol": symbol.upper(), "bar_date": d,
-                "close": float(close), "is_vix": False, "source": "public",
-            })
-        return rows
-    except Exception:
-        return []
+        except Exception:
+            return []
 
 
 def _build_points(
@@ -118,9 +157,7 @@ async def get_market_history_by_symbol(
     fetches 2 years of history from yfinance on-demand, stores it, then returns.
     This lets the user chart any ticker, not just tracked underlyings.
     """
-    symbol = symbol.strip().upper()
-    if not symbol:
-        raise HTTPException(status_code=400, detail="symbol is required")
+    symbol = validate_symbol(symbol)
 
     months = max(1, min(months, 24))
     window_days = months * 31

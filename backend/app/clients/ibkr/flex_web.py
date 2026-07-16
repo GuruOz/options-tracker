@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-import xml.etree.ElementTree as ET
 
+import defusedxml.ElementTree as ET
+import defusedxml.common
 import httpx
 
 from app.core.logging import get_logger
@@ -108,7 +109,7 @@ def _parse_reference(xml_text: str) -> str | None:
             refs = qs.get("q", [])
             if refs:
                 return refs[0]
-    except ET.ParseError:
+    except (ET.ParseError, defusedxml.common.DefusedXmlException):
         pass
     return None
 
@@ -123,7 +124,7 @@ def _parse_error(xml_text: str) -> str | None:
         status = root.findtext("Status")
         if status and status.lower() != "success":
             return status
-    except ET.ParseError:
+    except (ET.ParseError, defusedxml.common.DefusedXmlException):
         if "error" in xml_text.lower():
             return xml_text[:200]
     return None
