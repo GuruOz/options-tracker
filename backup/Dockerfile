@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # postgres:16-alpine plus `age` for optional client-side backup encryption.
-FROM postgres:16-alpine
+FROM postgres:18-alpine
 RUN apk add --no-cache age
 
 # trivy:ignore:AVD-DS-0002
