@@ -6,7 +6,12 @@ echo " Updating Options Tracker to the latest version..."
 echo "==========================================================="
 
 echo "1. Pulling latest code from GitHub..."
-git pull origin master
+# --autostash: a prior manual edit, or even just a line-ending/permission
+# diff picked up from however this file first landed on the server, is
+# enough to make a plain `git pull` refuse outright ("local changes would
+# be overwritten"). Autostash sets it aside before pulling and reapplies it
+# after, so routine deploys aren't blocked by that.
+git pull --autostash origin master
 
 echo ""
 echo "2. Checking for a .env file..."
