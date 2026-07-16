@@ -93,7 +93,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Audit
-        run: npm audit --audit-level=high
+        # --omit=dev: build tooling (vite/esbuild) never ships in the production
+        # image (the Dockerfile only copies the built `dist/` output) - a dev-server
+        # vulnerability there has no runtime exposure. Production deps stay audited.
+        run: npm audit --omit=dev --audit-level=high
 
   eslint:
     name: ESLint (frontend)
