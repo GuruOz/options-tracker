@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { getJSON } from "../api/client";
+import { getJSON, withAccount } from "../api/client";
 import type { Risk } from "../api/types";
+import { useAccount } from "../hooks/useAccount";
 
 const money = (v: number | null | undefined, signed = false) => {
   if (v == null) return "—";
@@ -65,11 +66,15 @@ function Stat({
 }
 
 export function RiskPanel() {
+  const { selected } = useAccount();
   const { data } = useQuery({
-    queryKey: ["risk"],
-    queryFn: () => getJSON<Risk | null>("/api/risk"),
+    queryKey: ["risk", selected],
+    queryFn: () => getJSON<Risk | null>(withAccount("/api/risk", selected)),
   });
   if (!data) return null;
+
+  const perAccount = data.per_account ?? [];
+  const isCombined = perAccount.length > 0;
 
   const movePct = `${(data.scenario_move * 100).toFixed(0)}%`;
   const scenarioTone = (data.scenario_pnl ?? 0) < 0 ? "bad" : "good";
@@ -78,6 +83,8 @@ export function RiskPanel() {
   const covTone = cov == null ? "default" : cov >= 1 ? "good" : "warn";
   const covBar = cov == null ? 0 : Math.min(cov, 2) / 2 * 100; // bar maxes at 200%
 
+  // Combined mode returns no summed curve: each account's snapshots land on
+  // their own timestamps, so the accounts' curves are shown side by side below.
   const equity = data.equity_curve
     .map((e) => e.net_liquidation)
     .filter((v): v is number => v != null);
@@ -91,7 +98,9 @@ export function RiskPanel() {
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">Portfolio risk</h2>
+        <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">
+          Portfolio risk{isCombined ? " — all accounts" : ""}
+        </h2>
         <span className="text-xs text-slate-400 dark:text-slate-500">linear estimate — not advice</span>
       </div>
 
@@ -115,14 +124,40 @@ export function RiskPanel() {
           sub={
             data.assignment.short_put_count === 0
               ? "No short puts"
-              : `${money(data.assignment.cash)} cash / ${money(data.assignment.total_obligation)} obligation`
+              : `${money(data.assignment.cash)} cash / ${money(data.assignment.total_obligation)} obligation${
+                  isCombined ? " · pooled" : ""
+                }`
           }
           tone={covTone}
-          title="Cash on hand vs. total cost if every short put were assigned (strike × 100 × contracts)."
+          title={
+            isCombined
+              ? "Cash on hand vs. total cost if every short put were assigned, pooled across accounts. Approximate: cash in one account can't actually cover the other's assignment."
+              : "Cash on hand vs. total cost if every short put were assigned (strike × 100 × contracts)."
+          }
         />
         <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-700 dark:bg-slate-800">
           <div className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Equity curve</div>
-          {equity.length >= 2 ? (
+          {isCombined ? (
+            <div className="mt-1 space-y-1">
+              {perAccount.map((a) => {
+                const pts = a.equity_curve
+                  .map((e) => e.net_liquidation)
+                  .filter((v): v is number => v != null);
+                return (
+                  <div key={a.account_id} className="flex items-center gap-2">
+                    <span className="w-16 shrink-0 truncate text-[10px] text-slate-400 dark:text-slate-500">
+                      {a.account_label}
+                    </span>
+                    {pts.length >= 2 ? (
+                      <Sparkline points={pts} />
+                    ) : (
+                      <span className="text-[10px] text-slate-400">not enough history</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : equity.length >= 2 ? (
             <div className="mt-1">
               <Sparkline points={equity} />
             </div>

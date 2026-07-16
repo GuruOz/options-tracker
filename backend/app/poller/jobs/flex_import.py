@@ -1,53 +1,66 @@
 """Flex Web Service import job — runs independently of auth.
 
 Pulls historical trades from IBKR's Flex Web Service directly (not via CP Gateway).
-Requires IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID in .env.
+Each user configures their own token/query (IBKR_USER{n}_FLEX_TOKEN /
+IBKR_USER{n}_FLEX_QUERY_ID); a user who hasn't set one up is simply skipped.
 """
 from __future__ import annotations
 
-from app.clients.ibkr import IBKRClient
-from app.core.config import get_settings
+from app.core.gateways import GatewayRuntime, all_runtimes
 from app.core.logging import get_logger
-from app.core.state import broadcast_event, session_state
+from app.core.state import broadcast_event
 from app.db.base import AsyncSessionLocal
 from app.db.models import Execution
 
 log = get_logger("poller.flex")
-_settings = get_settings()
 
 
-async def import_flex_trades(client: IBKRClient) -> None:  # noqa: ARG001
-    """Run Flex Web Service import. Idempotent — skips existing exec_ids."""
-    token = _settings.ibkr_flex_token
-    query_id = _settings.ibkr_flex_query_id
+async def import_flex_trades() -> None:
+    """Run the Flex import for every user that has one configured."""
+    for runtime in all_runtimes():
+        try:
+            await _import_flex_one(runtime)
+        except Exception as exc:
+            log.warning("flex_job_failed", gateway=runtime.gateway_id, error=str(exc))
+
+
+async def _import_flex_one(runtime: GatewayRuntime) -> None:
+    """Idempotent — skips existing exec_ids.
+
+    Note the account only has to have been *detected* (not currently logged in):
+    `account_id` stays set after logout, so the hourly import keeps backfilling
+    history for a user who has since released their session.
+    """
+    token = runtime.config.flex_token
+    query_id = runtime.config.flex_query_id
     if not token or not query_id:
         return
 
-    if not session_state.account_id:
+    account_id = runtime.state.account_id
+    if not account_id:
         return
 
-    try:
-        from app.clients.ibkr.flex_web import fetch_flex_trades
-        trades = await fetch_flex_trades(token, query_id)
-        if not trades:
-            return
+    from app.clients.ibkr.flex_web import fetch_flex_trades
+    trades = await fetch_flex_trades(token, query_id)
+    if not trades:
+        return
 
-        account_id = session_state.account_id
-        for t in trades:
-            t["account_id"] = account_id
+    for t in trades:
+        t["account_id"] = account_id
 
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        async with AsyncSessionLocal() as session:
-            stmt = (
-                pg_insert(Execution)
-                .values(trades)
-                .on_conflict_do_nothing(index_elements=["exec_id"])
-            )
-            result = await session.execute(stmt)
-            await session.commit()
-            flex_count = result.rowcount
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            pg_insert(Execution)
+            .values(trades)
+            .on_conflict_do_nothing(index_elements=["exec_id"])
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        flex_count = result.rowcount
 
-        log.info("flex_job_import", parsed=len(trades), inserted=flex_count)
-        await broadcast_event("trades")
-    except Exception as exc:
-        log.warning("flex_job_failed", error=str(exc))
+    log.info(
+        "flex_job_import", gateway=runtime.gateway_id,
+        parsed=len(trades), inserted=flex_count,
+    )
+    await broadcast_event("trades", account_id)

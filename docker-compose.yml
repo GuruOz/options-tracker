@@ -11,6 +11,53 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "5"
 
+# One IBEAM gateway per IBKR login: IBKR won't hold two Client Portal sessions
+# on one login, so each user needs their own container with their own creds.
+# Everything except the credentials and the outputs volume is identical, so it
+# is defined once here and merged into each gateway service.
+x-ibeam-common: &ibeam-common
+  # Pinned by digest for reproducible 24/7 builds (was :latest). To update,
+  # pull a newer voyz/ibeam, test login, then replace this digest.
+  image: voyz/ibeam@sha256:6a9e1eb91c82235f8e52ec615c1686e2ca8254a758fc438d9ed1b10682508ec3
+  restart: "no"
+  healthcheck:
+    # Image is Python-based; just confirm the gateway port is accepting TCP.
+    test: ["CMD-SHELL", "python -c \"import socket;socket.create_connection(('127.0.0.1',5000),3)\""]
+    interval: 15s
+    timeout: 5s
+    retries: 10
+    start_period: 40s
+  networks: [internal]
+  logging: *default-logging
+  mem_limit: 1536m
+  # Never published to the host's public interface.
+
+x-ibeam-env: &ibeam-env
+  # Disable periodic auto-maintenance — auth is user-initiated via the backend.
+  # Use a large value (24h) because IBEAM treats 0 as 1 second.
+  IBEAM_MAINTENANCE_INTERVAL: ${IBEAM_MAINTENANCE_INTERVAL:-86400}
+  IBEAM_PAGE_LOAD_TIMEOUT: ${IBEAM_PAGE_LOAD_TIMEOUT:-60}
+  # Prevent automatic retry of failed logins — avoids unsolicited MFA pushes.
+  IBEAM_RESTART_FAILED_SESSIONS: "false"
+  IBEAM_MAX_FAILED_AUTH: "1"
+  # IBKR login page selectors — IBKR changes these periodically.
+  # Override with resilient defaults that work regardless of class names.
+  IBEAM_USER_NAME_EL: NAME@@user_name
+  IBEAM_SUBMIT_EL: CSS_SELECTOR@@button[type="submit"]
+  # Try authentication strategy A — the older, more robust login flow.
+  IBEAM_AUTHENTICATION_STRATEGY: "A"
+  # Give OAuth more time and save screenshots on failure for debugging.
+  IBEAM_OAUTH_TIMEOUT: "60"
+  IBEAM_ERROR_SCREENSHOTS: "true"
+  # Manual 2FA — user approves push on phone, IBEAM polls gateway auth status.
+  IBEAM_MANUAL_TWO_FA: "true"
+  # 2FA input field — IBKR renamed from "bronze" to "silver" in 2026.
+  IBEAM_TWO_FA_INPUT_EL_ID: ID@@xyz-field-silver-response
+  # Advanced (optional): to store the password Fernet-encrypted, uncomment the
+  # next line and set IBEAM_KEY to a 32-byte url-safe base64 key in .env.
+  # Leave it OUT for a plaintext password — an EMPTY key makes login fail.
+  # IBEAM_KEY: ${IBEAM_KEY}
+
 services:
   db:
     image: postgres:16-alpine
@@ -32,42 +79,18 @@ services:
     # Not published to the host. Uncomment for local DB debugging only:
     # ports: ["127.0.0.1:5432:5432"]
 
+  # User 1's gateway (IBKR_USER1_GATEWAY_URL).
   ibkr-gateway:
-    # Pinned by digest for reproducible 24/7 builds (was :latest). To update,
-    # pull a newer voyz/ibeam, test login, then replace this digest.
-    image: voyz/ibeam@sha256:6a9e1eb91c82235f8e52ec615c1686e2ca8254a758fc438d9ed1b10682508ec3
-    restart: "no"
+    <<: *ibeam-common
     environment:
+      <<: *ibeam-env
       IBEAM_ACCOUNT: ${IBEAM_ACCOUNT:?set IBEAM_ACCOUNT in .env}
       IBEAM_PASSWORD: ${IBEAM_PASSWORD:?set IBEAM_PASSWORD in .env}
-      # Disable periodic auto-maintenance — auth is user-initiated via the backend.
-      # Use a large value (24h) because IBEAM treats 0 as 1 second.
-      IBEAM_MAINTENANCE_INTERVAL: ${IBEAM_MAINTENANCE_INTERVAL:-86400}
-      IBEAM_PAGE_LOAD_TIMEOUT: ${IBEAM_PAGE_LOAD_TIMEOUT:-60}
-      # Prevent automatic retry of failed logins — avoids unsolicited MFA pushes.
-      IBEAM_RESTART_FAILED_SESSIONS: "false"
-      IBEAM_MAX_FAILED_AUTH: "1"
-      # IBKR login page selectors — IBKR changes these periodically.
-      # Override with resilient defaults that work regardless of class names.
-      IBEAM_USER_NAME_EL: NAME@@user_name
-      IBEAM_SUBMIT_EL: CSS_SELECTOR@@button[type="submit"]
-      # Try authentication strategy A — the older, more robust login flow.
-      IBEAM_AUTHENTICATION_STRATEGY: "A"
-      # Give OAuth more time and save screenshots on failure for debugging.
-      IBEAM_OAUTH_TIMEOUT: "60"
-      IBEAM_ERROR_SCREENSHOTS: "true"
-      # Manual 2FA — user approves push on phone, IBEAM polls gateway auth status.
-      IBEAM_MANUAL_TWO_FA: "true"
-      # 2FA input field — IBKR renamed from "bronze" to "silver" in 2026.
-      IBEAM_TWO_FA_INPUT_EL_ID: ID@@xyz-field-silver-response
-      # Advanced (optional): to store the password Fernet-encrypted, uncomment the
-      # next line and set IBEAM_KEY to a 32-byte url-safe base64 key in .env.
-      # Leave it OUT for a plaintext password — an EMPTY key makes login fail.
-      # IBEAM_KEY: ${IBEAM_KEY}
     volumes:
       # Widen the gateway's IP allowlist to the Compose network, otherwise it
-      # returns "Access Denied" to the backend. Single-file mount (safe).
-      - ./gateway/conf.yaml:/srv/clientportal.gw/root/conf.yaml
+      # returns "Access Denied" to the backend. Single-file mount (safe), and
+      # read-only so neither gateway can rewrite the other's allowlist.
+      - ./gateway/conf.yaml:/srv/clientportal.gw/root/conf.yaml:ro
       # IBEAM writes its log + debug screenshots here on every boot. Use a named
       # volume (NOT a host bind mount): on a fresh clone the bind-mount dir is
       # created root-owned, and the non-root gateway user can't write to it, which
@@ -75,17 +98,21 @@ services:
       # volume is initialized writable for the container user. Retrieve files with:
       #   docker compose cp ibkr-gateway:/srv/outputs ./gateway-outputs
       - gateway-outputs:/srv/outputs
-    healthcheck:
-      # Image is Python-based; just confirm the gateway port is accepting TCP.
-      test: ["CMD-SHELL", "python -c \"import socket;socket.create_connection(('127.0.0.1',5000),3)\""]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 40s
-    networks: [internal]
-    logging: *default-logging
-    mem_limit: 1536m
-    # Never published to the host's public interface.
+
+  # User 2's gateway (IBKR_USER2_GATEWAY_URL). Idle and costing nothing until
+  # that user clicks "Pull Fresh Data" — restart: "no" means it only runs when
+  # the backend starts it, and the backend needs the container to exist to do
+  # that (hence no compose profile). Leave IBEAM_ACCOUNT_2 unset for a
+  # single-user deployment: the container is created but never started.
+  ibkr-gateway-2:
+    <<: *ibeam-common
+    environment:
+      <<: *ibeam-env
+      IBEAM_ACCOUNT: ${IBEAM_ACCOUNT_2:-}
+      IBEAM_PASSWORD: ${IBEAM_PASSWORD_2:-}
+    volumes:
+      - ./gateway/conf.yaml:/srv/clientportal.gw/root/conf.yaml:ro
+      - gateway-outputs-2:/srv/outputs
 
   backend:
     build:
@@ -114,6 +141,20 @@ services:
       # IBKR Flex Web Service — one-time setup in IBKR Account Management (see README).
       IBKR_FLEX_TOKEN: ${IBKR_FLEX_TOKEN:-}
       IBKR_FLEX_QUERY_ID: ${IBKR_FLEX_QUERY_ID:-}
+      # Per-user gateways. With no IBKR_USER1_* set, the backend falls back to
+      # the legacy single-user vars above, so an existing .env keeps working.
+      IBKR_USER1_LABEL: ${IBKR_USER1_LABEL:-}
+      IBKR_USER1_GATEWAY_URL: ${IBKR_USER1_GATEWAY_URL:-}
+      IBKR_USER1_CONTAINER: ${IBKR_USER1_CONTAINER:-}
+      IBKR_USER1_ACCOUNT_ID: ${IBKR_USER1_ACCOUNT_ID:-}
+      IBKR_USER1_FLEX_TOKEN: ${IBKR_USER1_FLEX_TOKEN:-}
+      IBKR_USER1_FLEX_QUERY_ID: ${IBKR_USER1_FLEX_QUERY_ID:-}
+      IBKR_USER2_LABEL: ${IBKR_USER2_LABEL:-}
+      IBKR_USER2_GATEWAY_URL: ${IBKR_USER2_GATEWAY_URL:-}
+      IBKR_USER2_CONTAINER: ${IBKR_USER2_CONTAINER:-}
+      IBKR_USER2_ACCOUNT_ID: ${IBKR_USER2_ACCOUNT_ID:-}
+      IBKR_USER2_FLEX_TOKEN: ${IBKR_USER2_FLEX_TOKEN:-}
+      IBKR_USER2_FLEX_QUERY_ID: ${IBKR_USER2_FLEX_QUERY_ID:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -202,6 +243,7 @@ services:
 volumes:
   pgdata:
   gateway-outputs:
+  gateway-outputs-2:
 
 networks:
   internal:

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getJSON } from "../api/client";
+import { getJSON, withAccount } from "../api/client";
 import type { Position, RollChain, Trade } from "../api/types";
+import { ALL_ACCOUNTS, useAccount } from "../hooks/useAccount";
 // `chainLabel` ("NVDA 216P") and `money` live in ./ChainTimeline so the timeline
 // and alerts panel can share the same formatting.
 import { ChainTimeline, money, chainLabel, chainHeadline, isAssignedOpenChain } from "./ChainTimeline";
@@ -31,23 +32,25 @@ export function PositionsPanel({
   const [uploadMsg, setUploadMsg] = useState("");
   const [timelineChain, setTimelineChain] = useState<RollChain | null>(null);
   const queryClient = useQueryClient();
+  const { selected, isAll, accounts } = useAccount();
+  const showAccountColumn = isAll && accounts.length > 1;
 
   const { data: positions, isFetching: posFetching } = useQuery({
-    queryKey: ["positions"],
-    queryFn: () => getJSON<Position[]>("/api/positions"),
+    queryKey: ["positions", selected],
+    queryFn: () => getJSON<Position[]>(withAccount("/api/positions", selected)),
   });
   const { data: chains } = useQuery({
-    queryKey: ["chains"],
-    queryFn: () => getJSON<RollChain[]>("/api/chains?status=open"),
+    queryKey: ["chains", selected],
+    queryFn: () => getJSON<RollChain[]>(withAccount("/api/chains?status=open", selected)),
   });
   const { data: closedChains, isFetching: closedLoading } = useQuery({
-    queryKey: ["chains", "closed"],
-    queryFn: () => getJSON<RollChain[]>("/api/chains?status=closed"),
+    queryKey: ["chains", "closed", selected],
+    queryFn: () => getJSON<RollChain[]>(withAccount("/api/chains?status=closed", selected)),
     enabled: showClosed,
   });
   const { data: optionTrades } = useQuery({
-    queryKey: ["trades", "options"],
-    queryFn: () => getJSON<Trade[]>("/api/trades/options"),
+    queryKey: ["trades", "options", selected],
+    queryFn: () => getJSON<Trade[]>(withAccount("/api/trades/options", selected)),
   });
 
   const rows = positions ?? [];
@@ -111,6 +114,7 @@ export function PositionsPanel({
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-700">
+              {showAccountColumn && <th className="pr-3" title="Which account this position belongs to.">Account</th>}
               <th className="py-2 pr-3" title="Underlying ticker. 🔗 marks a position that belongs to a roll chain.">Symbol</th>
               <th className="pr-3" title="Security type, plus the option right (P/C) and strike.">Type</th>
               <th className="pr-3" title="Lifecycle pill: TAKE PROFIT (>=70% premium captured), AT RISK (cushion < 3%), EXPIRING (<=2 DTE), or WATCH (near a threshold: >=65% captured or cushion < 5%). For a position in a roll chain, capture is measured across the whole chain, not the current leg.">Status</th>
@@ -140,11 +144,12 @@ export function PositionsPanel({
                   selectedConid={selectedConid}
                   onSelect={onSelect}
                   onOpenTimeline={setTimelineChain}
+                  showAccountColumn={showAccountColumn}
                 />
               );
             })}
             {ungrouped.map((p) => (
-              <PositionRow key={p.conid} p={p} selected={p.conid === selectedConid} onSelect={onSelect} />
+              <PositionRow key={p.conid} p={p} selected={p.conid === selectedConid} onSelect={onSelect} showAccountColumn={showAccountColumn} />
             ))}
           </tbody>
         </table>
@@ -232,11 +237,16 @@ export function PositionsPanel({
               onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
+                if (selected === ALL_ACCOUNTS) {
+                  setUploadMsg("Pick a specific account before importing a CSV.");
+                  e.target.value = "";
+                  return;
+                }
                 setUploadMsg("Uploading...");
                 try {
                   const form = new FormData();
                   form.append("file", file);
-                  const res = await fetch("/api/trades/upload", {
+                  const res = await fetch(withAccount("/api/trades/upload", selected), {
                     method: "POST",
                     body: form,
                   });
@@ -318,6 +328,7 @@ function ChainGroup({
   selectedConid,
   onSelect,
   onOpenTimeline,
+  showAccountColumn,
 }: {
   chainId: string;
   chain: RollChain | undefined;
@@ -325,14 +336,16 @@ function ChainGroup({
   selectedConid: number | null;
   onSelect: (conid: number) => void;
   onOpenTimeline: (chain: RollChain) => void;
+  showAccountColumn: boolean;
 }) {
   const [linking, setLinking] = useState(false);
   const queryClient = useQueryClient();
+  const { selected } = useAccount();
   const assigned = chain ? isAssignedOpenChain(chain) : false;
 
   const { data: allChains } = useQuery({
-    queryKey: ["chains", "all"],
-    queryFn: () => getJSON<RollChain[]>("/api/chains?status=all"),
+    queryKey: ["chains", "all", selected],
+    queryFn: () => getJSON<RollChain[]>(withAccount("/api/chains?status=all", selected)),
     enabled: linking,
   });
 
@@ -365,13 +378,18 @@ function ChainGroup({
         onClick={() => chain && onOpenTimeline(chain)}
         title="View chronological timeline"
       >
-        <td colSpan={15} className="py-2 px-2">
+        <td colSpan={showAccountColumn ? 16 : 15} className="py-2 px-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 text-xs">
               <span className="text-slate-400">📜</span>
               <span className="text-amber-600 dark:text-amber-400 font-semibold">🔗 Chain</span>
               {chain && (
                 <span className="text-slate-600 dark:text-slate-300 font-bold tracking-wide">{chainLabel(chain)}</span>
+              )}
+              {showAccountColumn && chain?.account_label && (
+                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                  {chain.account_label}
+                </span>
               )}
               {assigned && (
                 <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:bg-rose-900/30 dark:text-rose-400">
@@ -442,7 +460,7 @@ function ChainGroup({
   );
 }
 
-function PositionRow({ p, selected, onSelect }: { p: Position; selected: boolean; onSelect: (conid: number) => void }) {
+function PositionRow({ p, selected, onSelect, showAccountColumn }: { p: Position; selected: boolean; onSelect: (conid: number) => void; showAccountColumn?: boolean }) {
   const myAvg = p.avg_cost != null ? p.avg_cost / 100 : null;
   const intrinsicMoney = p.intrinsic_value != null && p.position != null ? p.intrinsic_value * 100 * Math.abs(p.position) : null;
   const extrinsicMoney = p.extrinsic_value != null && p.position != null ? p.extrinsic_value * 100 * Math.abs(p.position) : null;
@@ -456,6 +474,9 @@ function PositionRow({ p, selected, onSelect }: { p: Position; selected: boolean
       onClick={hasCurve ? () => onSelect(p.conid) : undefined}
       title={hasCurve ? "Chart time-value decay in the panel below" : undefined}
     >
+      {showAccountColumn && (
+        <td className="pr-3 text-xs text-slate-400 dark:text-slate-500">{p.account_label ?? "—"}</td>
+      )}
       <td className="py-2 pr-3 font-medium text-slate-800 dark:text-slate-100">
         {hasCurve && (
           <svg

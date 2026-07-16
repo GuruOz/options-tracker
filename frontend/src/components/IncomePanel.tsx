@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getJSON } from "../api/client";
+import { getJSON, withAccount } from "../api/client";
 import type { Income, IncomeMonth } from "../api/types";
+import { useAccount } from "../hooks/useAccount";
 
 const money = (v: number | null | undefined, signed = false) => {
   if (v == null) return "—";
@@ -111,9 +112,11 @@ function MonthlyBars({ months }: { months: IncomeMonth[] }) {
 function MonthRow({
   m,
   onSave,
+  readOnly = false,
 }: {
   m: IncomeMonth;
   onSave: (month: string, body: { cashed_out: boolean; withdrawal_amount: number | null; note: string | null }) => void;
+  readOnly?: boolean;
 }) {
   const [cashedOut, setCashedOut] = useState(m.cashed_out);
   const [withdrawal, setWithdrawal] = useState(m.withdrawal != null ? String(m.withdrawal) : "");
@@ -145,11 +148,12 @@ function MonthRow({
         <input
           type="checkbox"
           checked={cashedOut}
+          disabled={readOnly}
           onChange={(e) => {
             setCashedOut(e.target.checked);
             save({ cashed_out: e.target.checked });
           }}
-          className="h-4 w-4 cursor-pointer accent-emerald-600"
+          className="h-4 w-4 cursor-pointer accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </td>
       <td className="pr-3 text-right">
@@ -158,9 +162,10 @@ function MonthRow({
           inputMode="decimal"
           value={withdrawal}
           placeholder="—"
+          disabled={readOnly}
           onChange={(e) => setWithdrawal(e.target.value)}
           onBlur={() => save()}
-          className="w-20 rounded border border-slate-200 bg-transparent px-1.5 py-0.5 text-right text-xs tabular-nums focus:border-blue-400 focus:outline-none dark:border-slate-600"
+          className="w-20 rounded border border-slate-200 bg-transparent px-1.5 py-0.5 text-right text-xs tabular-nums focus:border-blue-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600"
         />
       </td>
       <td>
@@ -168,9 +173,10 @@ function MonthRow({
           type="text"
           value={note}
           placeholder="note…"
+          disabled={readOnly}
           onChange={(e) => setNote(e.target.value)}
           onBlur={() => save()}
-          className="w-full rounded border border-slate-200 bg-transparent px-1.5 py-0.5 text-xs focus:border-blue-400 focus:outline-none dark:border-slate-600"
+          className="w-full rounded border border-slate-200 bg-transparent px-1.5 py-0.5 text-xs focus:border-blue-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600"
         />
       </td>
     </tr>
@@ -179,18 +185,23 @@ function MonthRow({
 
 export function IncomePanel() {
   const queryClient = useQueryClient();
+  const { selected, isAll } = useAccount();
   const { data } = useQuery({
-    queryKey: ["income"],
-    queryFn: () => getJSON<Income>("/api/income"),
+    queryKey: ["income", selected],
+    queryFn: () => getJSON<Income>(withAccount("/api/income", selected)),
   });
 
   if (!data || data.months.length === 0) return null;
+
+  const byAccount = data.by_account ?? [];
+  const isCombined = byAccount.length > 0;
 
   const saveAdjustment = async (
     month: string,
     body: { cashed_out: boolean; withdrawal_amount: number | null; note: string | null }
   ) => {
-    await fetch("/api/income/adjustments", {
+    if (isAll) return; // guarded in the UI too, but never write against "all"
+    await fetch(withAccount("/api/income/adjustments", selected), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ month, ...body }),
@@ -203,9 +214,17 @@ export function IncomePanel() {
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">Premium income</h2>
+        <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">
+          Premium income{isCombined ? " — all accounts" : ""}
+        </h2>
         <span className="text-xs text-slate-400 dark:text-slate-500">banked · commission-net · by trade-open month</span>
       </div>
+      {isCombined && (
+        <p className="mb-3 text-xs text-amber-600 dark:text-amber-400">
+          Cashed-out flags and withdrawals are per account — pick a specific account to edit them.
+          {" "}Per-account: {byAccount.map((a) => `${a.account_label} ${money(a.all_time, true)}`).join(" · ")}
+        </p>
+      )}
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Stat
@@ -276,7 +295,7 @@ export function IncomePanel() {
           </thead>
           <tbody>
             {data.months.map((m) => (
-              <MonthRow key={m.month} m={m} onSave={saveAdjustment} />
+              <MonthRow key={m.month} m={m} onSave={saveAdjustment} readOnly={isCombined} />
             ))}
           </tbody>
         </table>

@@ -1,10 +1,11 @@
 """Poll underlying history + IV, compute indicators and the composite signal.
 
-Tracked underlyings come exclusively from settings.underlyings (user-configured).
+Tracked underlyings are the UNION of every account's watchlist: market data is
+conid-keyed and shared, so one fetch serves whoever is watching that symbol.
 
 Two modes:
   * refresh_public_prices — yfinance fallback, runs WITHOUT IBKR auth
-  * poll_market — IBKR-sourced snapshots, requires active user session
+  * poll_market — IBKR-sourced snapshots, requires any active user session
 """
 from __future__ import annotations
 
@@ -14,18 +15,19 @@ from sqlalchemy import desc, select
 
 from app.analytics import indicators
 from app.analytics.signal import compute_signal
-from app.clients.ibkr import IBKRAuthError, IBKRClient, IBKRError
+from app.clients.ibkr import IBKRAuthError, IBKRError
 from app.clients.ibkr.fields import UNDERLYING_FIELD_CODES
 from app.clients.ibkr.normalize import (
     parse_history,
     parse_history_bars,
     parse_underlying_quote,
 )
+from app.core.gateways import any_authenticated_client
 from app.core.logging import get_logger
-from app.core.state import broadcast_event, session_state
+from app.core.state import broadcast_event
 from app.db import repo
 from app.db.base import AsyncSessionLocal
-from app.db.models import MarketSnapshot, PositionSnapshot, Setting, SignalHistory
+from app.db.models import AccountSetting, MarketSnapshot, PositionSnapshot, Setting, SignalHistory
 
 
 log = get_logger("poller.market")
@@ -39,15 +41,21 @@ VIX_SYMBOL = "^VIX"
 
 
 async def _tracked_underlyings() -> dict[int, str]:
-    """Return {conid: symbol} from settings.underlyings only."""
+    """`{conid: symbol}` — the union of every account's watchlist.
+
+    Each user curates their own list, but the resulting market data is
+    conid-keyed and shared, so the poller fetches every symbol anyone tracks.
+    """
     async with AsyncSessionLocal() as session:
-        settings_row = await session.get(Setting, 1)
+        rows = await session.execute(select(AccountSetting.data))
+
     tracked: dict[int, str] = {}
-    for u in (settings_row.data if settings_row else {}).get("underlyings", []):
-        try:
-            tracked[int(u["conid"])] = u.get("symbol") or str(u["conid"])
-        except (KeyError, ValueError, TypeError):
-            continue
+    for (data,) in rows.all():
+        for u in (data or {}).get("underlyings", []):
+            try:
+                tracked[int(u["conid"])] = u.get("symbol") or str(u["conid"])
+            except (KeyError, ValueError, TypeError):
+                continue
     return tracked
 
 
@@ -56,24 +64,34 @@ async def _position_underlyings() -> dict[int, str]:
 
     Option position rows carry their underlying in ``raw`` (``undConid``/``undSym``),
     so we can fetch a spot for every underlier we actually hold options on — not
-    just the user-configured ``settings.underlyings``. Without this, an option on a
-    symbol the user never added to the tracked list never gets an underlying spot
-    and silently drops out of the decay / P&L panels.
+    just the user-configured watchlists. Without this, an option on a symbol the
+    user never added to the tracked list never gets an underlying spot and
+    silently drops out of the decay / P&L panels.
+
+    The latest batch is resolved PER ACCOUNT: a single global max(snapshot_ts)
+    belongs to whichever account polled most recently, which would silently drop
+    every other user's option underlyings.
     """
     async with AsyncSessionLocal() as session:
-        max_ts = (
-            select(PositionSnapshot.snapshot_ts)
-            .order_by(desc(PositionSnapshot.snapshot_ts))
-            .limit(1)
-            .scalar_subquery()
-        )
-        rows = await session.execute(
-            select(PositionSnapshot).where(
-                PositionSnapshot.snapshot_ts == max_ts,
-                PositionSnapshot.sec_type.in_(("OPT", "FOP", "WAR")),
+        account_ids = await repo.all_account_ids(session)
+
+        positions: list[PositionSnapshot] = []
+        for account_id in account_ids:
+            max_ts = (
+                select(PositionSnapshot.snapshot_ts)
+                .where(PositionSnapshot.account_id == account_id)
+                .order_by(desc(PositionSnapshot.snapshot_ts))
+                .limit(1)
+                .scalar_subquery()
             )
-        )
-        positions = rows.scalars().all()
+            rows = await session.execute(
+                select(PositionSnapshot).where(
+                    PositionSnapshot.account_id == account_id,
+                    PositionSnapshot.snapshot_ts == max_ts,
+                    PositionSnapshot.sec_type.in_(("OPT", "FOP", "WAR")),
+                )
+            )
+            positions.extend(rows.scalars().all())
 
     out: dict[int, str] = {}
     for p in positions:
@@ -99,8 +117,11 @@ async def _iv_history(conid: int, limit: int = 252) -> list[float]:
         return [float(v) for (v,) in rows.all() if v is not None]
 
 
-async def poll_market(client: IBKRClient) -> None:
-    if not session_state.user_logged_in:
+async def poll_market() -> None:
+    # Market data is account-agnostic (conid-keyed), so any authenticated
+    # session can fetch it on everyone's behalf.
+    client = any_authenticated_client()
+    if client is None:
         return
 
     async with AsyncSessionLocal() as session:
@@ -237,7 +258,7 @@ async def _vix_daily_rows() -> list[dict]:
     ]
 
 
-async def refresh_public_prices(client: IBKRClient) -> None:
+async def refresh_public_prices() -> None:
     """Public price refresh via yfinance — runs without IBKR auth.
 
     Fetches current price and IV for tracked underlyings from yfinance

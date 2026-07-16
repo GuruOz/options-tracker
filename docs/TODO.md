@@ -167,7 +167,7 @@ trigger an IBKR 2FA login.
 
 ## Roadmap (post-v1)
 
-- [ ] Optional **multi-account** support (one gateway container per account; schema already carries `account_id` FKs).
+- [x] Multi-user support (one gateway container per account; per-account settings; combined "All accounts" view). See README § Multi-user (household) setup.
 - [ ] Celery + Redis workers if polling needs to scale horizontally.
 - [ ] Docker socket mount security: use a Docker socket proxy (e.g., `tecnativa/docker-socket-proxy`) that limits access or use `docker compose` subprocess calls instead of direct socket access.
 

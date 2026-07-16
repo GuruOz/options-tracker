@@ -1,7 +1,8 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getJSON } from "../api/client";
+import { getJSON, withAccount } from "../api/client";
 import type { Position } from "../api/types";
+import { useAccount } from "../hooks/useAccount";
 import { bsPrice, impliedVol, intrinsic, normalizeIv } from "../lib/options";
 
 const MS_DAY = 86_400_000;
@@ -62,9 +63,10 @@ export function ProfitPanel({
   selectedConid: number | null;
   onSelect: (conid: number) => void;
 }) {
+  const { selected } = useAccount();
   const { data: positions } = useQuery({
-    queryKey: ["positions"],
-    queryFn: () => getJSON<Position[]>("/api/positions"),
+    queryKey: ["positions", selected],
+    queryFn: () => getJSON<Position[]>(withAccount("/api/positions", selected)),
   });
 
   const all = positions ?? [];

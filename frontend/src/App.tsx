@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getJSON } from "./api/client";
 import { useSession } from "./api/useSession";
+import { AccountProvider } from "./hooks/useAccount";
 import { useTheme } from "./hooks/useTheme";
 import type { Meta } from "./api/types";
 import { HeaderBar } from "./components/HeaderBar";
@@ -16,7 +17,15 @@ import { IncomePanel } from "./components/IncomePanel";
 import { MarketContextPanel } from "./components/MarketContextPanel";
 
 export default function App() {
-  const session = useSession();
+  return (
+    <AccountProvider>
+      <Dashboard />
+    </AccountProvider>
+  );
+}
+
+function Dashboard() {
+  const sessions = useSession();
   const { theme, toggleTheme } = useTheme();
   // Which position the decay & profit panels chart; driven by clicking a row in PositionsPanel.
   const [selectedConid, setSelectedConid] = useState<number | null>(null);
@@ -44,7 +53,7 @@ export default function App() {
       </header>
 
       <div className="mb-6">
-        <HeaderBar session={session} />
+        <HeaderBar sessions={sessions} />
       </div>
 
       <div className="space-y-4">

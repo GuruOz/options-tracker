@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.market_history import build_history_series
+from app.api.deps import account_scope
 from app.db import repo
 from app.db.base import get_session
-from app.db.models import Setting
 from app.schemas.responses import (
     MarketHistoryOut,
     MarketHistoryPointOut,
@@ -155,11 +155,21 @@ async def get_market_history_by_symbol(
 
 
 @router.get("/signals", response_model=list[SignalOut])
-async def get_signals(db: AsyncSession = Depends(get_session)):
-    settings_row = await db.get(Setting, 1)
+async def get_signals(
+    accounts: list[str] = Depends(account_scope),
+    db: AsyncSession = Depends(get_session),
+):
+    """Signals for the scoped account's watchlist (the union, for all accounts).
+
+    The signals themselves are market-wide; the watchlist only decides which of
+    them this user cares to see.
+    """
+    scope = set(accounts)
     tracked_conids = set()
-    if settings_row:
-        for u in (settings_row.data or {}).get("underlyings", []):
+    for row in await repo.all_account_settings(db):
+        if row.account_id not in scope:
+            continue
+        for u in (row.data or {}).get("underlyings", []):
             try:
                 tracked_conids.add(int(u["conid"]))
             except (KeyError, ValueError, TypeError):

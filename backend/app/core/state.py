@@ -3,6 +3,10 @@
 Session lifecycle is user-driven: login → pull data → browse → manual logout.
 No background keep-alive (no tickle, no auto-reauthenticate). A passive monitor
 releases any stray authenticated session for mobile.
+
+Multi-user: one `SessionState` per declared gateway, held in the `registry`.
+States are strictly independent — one user's gateway going down, authenticating,
+or being released must never move another's.
 """
 from __future__ import annotations
 
@@ -22,6 +26,8 @@ class GatewayStatus(str, Enum):
 
 @dataclass
 class SessionState:
+    gateway_id: str = "user1"
+    label: str = "Primary"
     status: GatewayStatus = GatewayStatus.UNKNOWN
     authenticated: bool = False
     connected: bool = False
@@ -60,7 +66,40 @@ class SessionState:
         return data
 
 
-session_state = SessionState()
+class SessionRegistry:
+    """Every declared gateway's live session state, keyed by gateway_id."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, SessionState] = {}
+
+    def register(self, gateway_id: str, label: str) -> SessionState:
+        state = SessionState(gateway_id=gateway_id, label=label)
+        self._sessions[gateway_id] = state
+        return state
+
+    def get(self, gateway_id: str) -> SessionState | None:
+        return self._sessions.get(gateway_id)
+
+    def all(self) -> list[SessionState]:
+        return list(self._sessions.values())
+
+    def by_account(self, account_id: str) -> SessionState | None:
+        for state in self._sessions.values():
+            if state.account_id == account_id:
+                return state
+        return None
+
+    def any_logged_in(self) -> bool:
+        return any(s.user_logged_in for s in self._sessions.values())
+
+    def to_dict(self) -> dict[str, dict]:
+        return {gid: s.to_dict() for gid, s in self._sessions.items()}
+
+    def clear(self) -> None:
+        self._sessions.clear()
+
+
+registry = SessionRegistry()
 
 
 class ConnectionManager:
@@ -92,10 +131,22 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-async def broadcast_session() -> None:
-    await manager.broadcast({"type": "session", "data": session_state.to_dict()})
+async def broadcast_session(state: SessionState) -> None:
+    await manager.broadcast({
+        "type": "session",
+        "gateway_id": state.gateway_id,
+        "data": state.to_dict(),
+    })
 
 
-async def broadcast_event(resource: str) -> None:
-    """Notify clients that a data resource changed so they can refetch."""
-    await manager.broadcast({"type": "data", "resource": resource})
+async def broadcast_event(resource: str, account_id: str | None = None) -> None:
+    """Notify clients that a data resource changed so they can refetch.
+
+    `account_id` is None for market-wide resources (market/signals), which are
+    conid-keyed and shared by every account.
+    """
+    await manager.broadcast({
+        "type": "data",
+        "resource": resource,
+        "account_id": account_id,
+    })

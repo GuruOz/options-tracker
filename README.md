@@ -9,9 +9,12 @@ keeps **all your data on your own machine**.
 > **Informational only — not investment advice.** The signal score, beta-weighted
 > exposure, and any Black-Scholes fallback Greeks are estimates and may be wrong.
 
-This is **one stack per user, per IBKR account**. A single IBKR gateway
-authenticates exactly one account, so there is no multi-tenant SaaS — you clone
-this repo and run it yourself.
+This is **one stack per household, self-hosted** — you clone this repo and run
+it yourself, not a multi-tenant SaaS. A single stack can track more than one
+IBKR login (e.g. you and a spouse): each person gets their own gateway
+container and their own watchlist, with a switcher in the header to move
+between accounts or view them combined. See
+[Multi-user (household) setup](#multi-user-household-setup) below.
 
 ---
 
@@ -95,6 +98,38 @@ docker compose up -d frontend   # apply (frontend-only; does NOT log IBKR out)
 Firewall: allow inbound TCP on `APP_PORT` (8080) on the server. The gateway,
 backend, db, and backups stay on the private Docker network and are never
 published.
+
+---
+
+## Multi-user (household) setup
+
+IBKR won't hold two Client Portal sessions on one login, so a second person
+with their own IBKR account needs their own gateway container. The schema and
+API were built for this from the start — adding a second user is additive, not
+a migration.
+
+1. In `.env`, fill in the `IBKR_USER1_*` and `IBKR_USER2_*` blocks (see the
+   comments in `.env.example`), plus `IBEAM_ACCOUNT_2` / `IBEAM_PASSWORD_2` for
+   the second person's IBKR login.
+2. `docker compose up -d` — this creates a second `ibkr-gateway-2` container,
+   idle until that user logs in.
+3. In the dashboard header, a switcher appears with a segment per user plus
+   **All**. Each person clicks their own **Pull Fresh Data** and gets their own
+   2FA push on their own phone; both can be logged in at the same time.
+4. Each user gets their own tracked-underlyings watchlist and alert thresholds.
+   **All** shows a combined view: positions/trades/alerts merged with an
+   account label, income and risk numbers summed across accounts (equity
+   curves and assignment-coverage cash are *not* fungible across accounts, so
+   those are shown per-account or flagged as approximate), and the watchlist as
+   a read-only union. Editing anything — the watchlist, alert thresholds,
+   income adjustments, CSV import — requires picking a specific account first.
+5. The Flex Web Service historical-trade import is also per user
+   (`IBKR_USER2_FLEX_TOKEN` / `IBKR_USER2_FLEX_QUERY_ID`) and optional — leave
+   it blank until that person sets one up in IBKR Account Management.
+
+Leave the whole `IBKR_USER*` section of `.env` blank for a single-user setup:
+the backend falls back to the legacy `IBKR_GATEWAY_URL` / `IBEAM_ACCOUNT` /
+`IBKR_FLEX_TOKEN` vars and behaves exactly as before.
 
 ---
 
@@ -275,7 +310,6 @@ npm run dev
 
 ## Roadmap (post-v1)
 
-- Optional **multi-account** support via one gateway container per account.
 - Celery + Redis workers if polling needs to scale horizontally.
 - Signal backtest view and richer roll-chain analytics.
 

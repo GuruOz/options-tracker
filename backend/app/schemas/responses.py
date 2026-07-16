@@ -53,6 +53,27 @@ class PositionOut(_ORM):
     chain_id: str | None = None
     source: str | None = None
     last_updated: datetime | None = None
+    # Which user this row belongs to — the combined view mixes accounts.
+    account_id: str | None = None
+    account_label: str | None = None
+
+
+class AccountOut(BaseModel):
+    """An account plus its latest summary — one entry per user in the switcher."""
+
+    account_id: str
+    label: str
+    base_currency: str | None = None
+    gateway_id: str | None = None
+    snapshot_ts: datetime | None = None
+    net_liquidation: float | None = None
+    available_funds: float | None = None
+    excess_liquidity: float | None = None
+    maintenance_margin: float | None = None
+    buying_power: float | None = None
+    cash: float | None = None
+    leverage: float | None = None
+    source: str | None = None
 
 
 class AccountSummaryOut(_ORM):
@@ -81,6 +102,8 @@ class TradeOut(_ORM):
     price: float | None = None
     commission: float | None = None
     exec_time: datetime | None = None
+    account_id: str | None = None
+    account_label: str | None = None
 
 
 class MarketOut(_ORM):

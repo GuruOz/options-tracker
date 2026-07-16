@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.rolls import _credit, _underlying_ticker
-from app.core.state import session_state
+from app.api.deps import account_scope
 from app.db import repo
 from app.db.base import get_session
 
@@ -23,6 +23,7 @@ def _exec_dump(e) -> dict:
     """One execution as the parser stored it + the credit P&L derives from it."""
     return {
         "exec_id": e.exec_id,
+        "account_id": e.account_id,
         "exec_time": e.exec_time.isoformat() if e.exec_time else None,
         "symbol": e.symbol,
         "underlying": _underlying_ticker(e.symbol),
@@ -45,16 +46,20 @@ def _exec_dump(e) -> dict:
 
 @router.get("/diagnostics/executions")
 async def dump_executions(
-    include_raw: bool = True, db: AsyncSession = Depends(get_session)
+    include_raw: bool = True,
+    accounts: list[str] = Depends(account_scope),
+    db: AsyncSession = Depends(get_session),
 ) -> dict:
     """Dump every parsed execution + per-underlying credit rollup.
 
     `include_raw=false` omits the raw IBKR payloads for a terser view.
     """
-    if not session_state.account_id:
+    if not accounts:
         return {"status": "error", "message": "No account selected.", "executions": []}
 
-    rows = await repo.all_executions(db, session_state.account_id)
+    rows = []
+    for account_id in accounts:
+        rows.extend(await repo.all_executions(db, account_id))
     dumps = [_exec_dump(e) for e in rows]
     if not include_raw:
         for d in dumps:
@@ -69,7 +74,7 @@ async def dump_executions(
 
     return {
         "status": "ok",
-        "account_id": session_state.account_id,
+        "account_ids": accounts,
         "count": len(rows),
         "by_source": dict(by_source),
         "credit_by_underlying": {k: round(v, 2) for k, v in sorted(by_underlying.items())},

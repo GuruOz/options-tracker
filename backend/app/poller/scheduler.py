@@ -9,6 +9,11 @@ Two phases for the data jobs (when user is logged in):
 The session monitor runs at a fixed cadence, passively checking auth_status
 and releasing any stray authenticated sessions. The public price refresh
 runs independently of IBKR auth state.
+
+Multi-user: there is still one job per job type — each job iterates the gateways
+whose user is logged in. The burst likewise stays global: any user's login
+re-arms it for every job, which at worst gives an already-logged-in user a
+briefly faster cadence.
 """
 from __future__ import annotations
 
@@ -17,7 +22,6 @@ from datetime import datetime, timedelta, timezone
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.clients.ibkr import IBKRClient
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.poller.jobs.account import poll_account
@@ -44,7 +48,6 @@ def _settle_job(job_id: str, steady_seconds: int) -> None:
 def _add_data_job(
     func,
     job_id: str,
-    client: IBKRClient,
     *,
     first_delay: float,
     burst_seconds: int,
@@ -56,7 +59,6 @@ def _add_data_job(
         func,
         trigger="interval",
         seconds=burst_seconds,
-        args=[client],
         id=job_id,
         max_instances=1,
         coalesce=True,
@@ -117,14 +119,13 @@ def rearm_burst(settings: Settings) -> None:
     log.info("burst_rearmed", jobs=rearmed, burst_seconds=burst, window_seconds=window)
 
 
-def start_scheduler(client: IBKRClient, settings: Settings) -> None:
+def start_scheduler(settings: Settings) -> None:
     now = datetime.now(timezone.utc)
 
     scheduler.add_job(
         monitor,
         trigger="interval",
         seconds=settings.poll_heartbeat_seconds,
-        args=[client],
         id="session_monitor",
         max_instances=1,
         coalesce=True,
@@ -135,7 +136,6 @@ def start_scheduler(client: IBKRClient, settings: Settings) -> None:
         refresh_public_prices,
         trigger="interval",
         seconds=settings.poll_public_price_seconds,
-        args=[client],
         id="public_price_refresh",
         max_instances=1,
         coalesce=True,
@@ -146,7 +146,6 @@ def start_scheduler(client: IBKRClient, settings: Settings) -> None:
         build_rolls,
         trigger="interval",
         seconds=settings.poll_trades_seconds,
-        args=[client],
         id="build_rolls",
         max_instances=1,
         coalesce=True,
@@ -157,7 +156,6 @@ def start_scheduler(client: IBKRClient, settings: Settings) -> None:
         import_flex_trades,
         trigger="interval",
         seconds=3600,
-        args=[client],
         id="flex_import",
         max_instances=1,
         coalesce=True,
@@ -167,22 +165,22 @@ def start_scheduler(client: IBKRClient, settings: Settings) -> None:
     burst = settings.poll_burst_seconds
     window = settings.poll_burst_window_seconds
     _add_data_job(
-        poll_positions, "poll_positions", client,
+        poll_positions, "poll_positions",
         first_delay=8, burst_seconds=burst, burst_window=window,
         steady_seconds=settings.poll_positions_seconds,
     )
     _add_data_job(
-        poll_account, "poll_account", client,
+        poll_account, "poll_account",
         first_delay=10, burst_seconds=burst, burst_window=window,
         steady_seconds=settings.poll_positions_seconds,
     )
     _add_data_job(
-        poll_trades, "poll_trades", client,
+        poll_trades, "poll_trades",
         first_delay=12, burst_seconds=burst, burst_window=window,
         steady_seconds=settings.poll_trades_seconds,
     )
     _add_data_job(
-        poll_market, "poll_market", client,
+        poll_market, "poll_market",
         first_delay=14, burst_seconds=burst, burst_window=window,
         steady_seconds=settings.poll_market_seconds,
     )
