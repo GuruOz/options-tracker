@@ -22,4 +22,4 @@ defusedxml==0.7.1
 # Scholes / market history) and yfinance's resolver can otherwise drift them.
 pandas==3.0.3
 numpy==2.5.1
-websockets==16.0
+websockets==16.1
