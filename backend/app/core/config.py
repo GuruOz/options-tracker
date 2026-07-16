@@ -88,6 +88,15 @@ class Settings(BaseSettings):
     ibkr_flex_token: str | None = None
     ibkr_flex_query_id: str | None = None
 
+    # In-app authentication — single shared login gating every /api route
+    # (except /api/health and /api/auth/login) plus /ws. See app/core/security.py.
+    auth_username: str = "admin"
+    auth_password_hash: str = ""       # argon2 hash; empty => logins rejected with 503
+    auth_session_ttl_hours: int = 168  # 7 days
+    auth_cookie_secure: bool = True    # False only for plain-HTTP local dev
+    auth_max_failed_logins: int = 5
+    auth_lockout_seconds: int = 300
+
     @property
     def verify_ssl(self) -> bool | str:
         """Return False, True, or a CA-bundle path for httpx's `verify`."""

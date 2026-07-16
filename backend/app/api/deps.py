@@ -6,13 +6,38 @@ it explicitly; the omitted case is a convenience fallback for a bare curl.
 """
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, Query
+import secrets
+from datetime import datetime, timezone
+
+from fastapi import Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import repo
+from app.db import auth_repo, repo
 from app.db.base import get_session
+from app.core.security import hash_token
 
 ALL = "all"
+
+_MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+async def require_auth(request: Request, db: AsyncSession = Depends(get_session)) -> None:
+    """Session-cookie auth + CSRF check for mutating requests.
+
+    Applied to every /api route except /api/health and /api/auth/login — see
+    the public_router/api_router split in app/api/__init__.py.
+    """
+    token = request.cookies.get("session")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    row = await auth_repo.get_session_by_hash(db, hash_token(token))
+    if row is None or row.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Session expired.")
+    if request.method in _MUTATING:
+        header = request.headers.get("x-csrf-token", "")
+        if not secrets.compare_digest(header, row.csrf_token):
+            raise HTTPException(status_code=403, detail="CSRF token missing or invalid.")
+    request.state.auth_session = row
 
 
 async def account_scope(

@@ -155,6 +155,11 @@ services:
       IBKR_USER2_ACCOUNT_ID: ${IBKR_USER2_ACCOUNT_ID:-}
       IBKR_USER2_FLEX_TOKEN: ${IBKR_USER2_FLEX_TOKEN:-}
       IBKR_USER2_FLEX_QUERY_ID: ${IBKR_USER2_FLEX_QUERY_ID:-}
+      # In-app login (single shared account). See README for the hash-CLI command.
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:-}
+      AUTH_SESSION_TTL_HOURS: ${AUTH_SESSION_TTL_HOURS:-168}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -182,11 +187,13 @@ services:
       backend:
         condition: service_started
     ports:
-      # The ONLY host-published port. Binds all interfaces by default (LAN-
-      # reachable); set APP_BIND=127.0.0.1 in .env to restrict to localhost.
-      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8080}:80"
+      # The ONLY host-published port. Binds to localhost only by default; set
+      # APP_BIND to a LAN/VPN interface IP in .env to reach it from elsewhere.
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8443}:8443"
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

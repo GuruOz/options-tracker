@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getJSON, withAccount } from "../api/client";
+import { getJSON, putJSON, withAccount } from "../api/client";
 import type { Income, IncomeMonth } from "../api/types";
 import { useAccount } from "../hooks/useAccount";
 
@@ -201,11 +201,7 @@ export function IncomePanel() {
     body: { cashed_out: boolean; withdrawal_amount: number | null; note: string | null }
   ) => {
     if (isAll) return; // guarded in the UI too, but never write against "all"
-    await fetch(withAccount("/api/income/adjustments", selected), {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ month, ...body }),
-    });
+    await putJSON(withAccount("/api/income/adjustments", selected), { month, ...body });
     queryClient.invalidateQueries({ queryKey: ["income"] });
   };
 

@@ -343,6 +343,20 @@ class Setting(Base):
     )
 
 
+class AuthSession(Base):
+    """A live login for the single shared account. token_hash is a sha256 of
+    the raw session cookie value — only the hash is ever persisted."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    csrf_token: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    client: Mapped[str | None] = mapped_column(String(255))  # truncated user-agent
+
+
 class AccountSetting(Base):
     """Per-account settings: the tracked-underlying watchlist + alert thresholds.
 
