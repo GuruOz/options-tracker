@@ -182,7 +182,7 @@ Data jobs run in two phases (see `poller/scheduler.py`). They self-skip until
 - `GET /api/trades` — recent trades (default 100, configurable limit)
 - `GET /api/trades/options` — all option trades (OPT/FOP/WAR), oldest first, no limit
 - `POST /api/trades/upload` — upload IBKR Activity Statement CSV for historical import
-- `GET /api/chains?status=open|closed|all` — roll-chain summaries (cumulative credit, leg count, opened/closed dates per chain)
+- `GET /api/chains?status=open|closed|all` — roll-chain summaries (cumulative credit, leg count, opened/closed dates per chain). How a chain's P&L headline (banked to date / locked / if-worthless / gathered beyond the opener) is derived: [roll-chain-economics.md](roll-chain-economics.md)
 
 ### Market & signals
 - `GET /api/market` — latest market snapshot per tracked underlying (with source column)

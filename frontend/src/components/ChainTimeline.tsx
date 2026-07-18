@@ -74,11 +74,22 @@ const STOCK_ROLES = new Set(["assignment_stock", "stock_close"]);
 export const chainHeadline = (c: RollChain) => {
   const open = c.status === "open";
   const banked = open ? c.banked_credit ?? c.cumulative_credit : c.cumulative_credit;
+  // Roll-to-the-end view: credit gathered beyond the opening sale, which lands in
+  // full only if the open leg expires worthless. Best-case, not banked — an early
+  // assignment or a buyback above the credit claws it back. Hidden for a cycle
+  // that hasn't rolled yet (cumulative == opener) — it would always read 0.
+  const opener = open ? c.initial_credit : null;
+  const beyondOpener =
+    opener != null && c.cumulative_credit != null && Math.abs(c.cumulative_credit - opener) >= 0.5
+      ? c.cumulative_credit - opener
+      : null;
   return {
     value: banked,
     label: open ? "banked to date" : "net total",
     locked: open ? c.open_credit ?? 0 : 0,
     ifWorthless: c.cumulative_credit,
+    opener,
+    beyondOpener,
   };
 };
 
@@ -142,6 +153,14 @@ export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onC
                 + {money(headline.locked)} locked in the open leg
                 <br />
                 {money(headline.ifWorthless)} if it expires worthless
+              </div>
+            )}
+            {headline.locked !== 0 && headline.beyondOpener != null && (
+              <div
+                className="mt-1 max-w-[15rem] text-[10px] leading-snug text-slate-400 dark:text-slate-500"
+                title="Roll-to-the-end view: total chain credit over the opening sale this cycle is working toward. Best case, not banked — it lands only if the open leg expires worthless; an early assignment or a buyback above the credit reduces it."
+              >
+                {headline.beyondOpener > 0 ? "+" : ""}{money(headline.beyondOpener)} gathered beyond the {money(headline.opener)} opener
               </div>
             )}
           </div>
