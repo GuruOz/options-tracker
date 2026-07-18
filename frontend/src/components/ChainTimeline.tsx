@@ -107,6 +107,39 @@ export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onC
   const headline = chainHeadline(chain);
   const net = headline.value;
 
+  // Equal-priority stat band under the header. The locked open-leg premium is
+  // deliberately not shown — the user reads the chain through banked credit,
+  // decay gathered by rolling, and the total the cycle is working toward.
+  type StatTile = { key: string; label: string; value: number | null; sub: string; tip?: string; signed?: boolean };
+  const tiles: StatTile[] = [
+    {
+      key: "banked",
+      label: headline.label,
+      value: net,
+      sub: chain.status === "open" ? "realised so far" : "final result",
+    },
+  ];
+  if (headline.locked !== 0 && headline.beyondOpener != null) {
+    tiles.push({
+      key: "decay",
+      label: "Realised time decay",
+      value: headline.beyondOpener,
+      sub: `beyond the ${money(headline.opener)} opener`,
+      signed: true,
+      tip: "Roll-to-the-end view: total chain credit over the opening sale this cycle is working toward. Best case, not banked — it lands only if the open leg expires worthless; an early assignment or a buyback above the credit reduces it.",
+    });
+  }
+  if (headline.locked !== 0) {
+    tiles.push({
+      key: "total",
+      label: "Time decay + initial premium",
+      value: headline.ifWorthless,
+      sub: "when chain closes",
+      tip: "Rolling doesn't collect the new put's premium — it swaps one open leg for another. Only the decay on the leg you closed is banked; the open leg pays out when it expires worthless or you buy it back.",
+    });
+  }
+  const tileCols = ["grid-cols-1", "grid-cols-2", "grid-cols-3"][tiles.length - 1];
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
@@ -116,7 +149,7 @@ export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onC
         className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-700 dark:bg-slate-900"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-5 flex items-start justify-between">
+        <div className="mb-4">
           <div>
             <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-800 dark:text-slate-100">
               🔗 {chainLabel(chain)}
@@ -136,34 +169,27 @@ export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onC
               {chain.closed_at ? ` · Closed ${new Date(chain.closed_at).toLocaleDateString()}` : ""}
             </p>
           </div>
-          <div className="text-right">
+        </div>
+
+        <div className={`mb-5 grid gap-2 ${tileCols}`}>
+          {tiles.map((t) => (
             <div
-              className={`text-xl font-bold tabular-nums ${
-                (net ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
-              }`}
+              key={t.key}
+              title={t.tip}
+              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/40"
             >
-              {money(net)}
+              <div className="text-[11px] uppercase tracking-wide text-slate-400">{t.label}</div>
+              <div
+                className={`mt-0.5 text-xl font-bold tabular-nums ${
+                  (t.value ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
+                }`}
+              >
+                {t.signed && (t.value ?? 0) > 0 ? "+" : ""}
+                {money(t.value)}
+              </div>
+              <div className="text-[11px] text-slate-400 dark:text-slate-500">{t.sub}</div>
             </div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-400">{headline.label}</div>
-            {headline.locked !== 0 && (
-              <div
-                className="mt-1 max-w-[15rem] text-[10px] leading-snug text-slate-400 dark:text-slate-500"
-                title="Rolling doesn't collect the new put's premium — it swaps one open leg for another. Only the decay on the leg you closed is banked; the open leg pays out when it expires worthless or you buy it back."
-              >
-                + {money(headline.locked)} locked in the open leg
-                <br />
-                {money(headline.ifWorthless)} if it expires worthless
-              </div>
-            )}
-            {headline.locked !== 0 && headline.beyondOpener != null && (
-              <div
-                className="mt-1 max-w-[15rem] text-[10px] leading-snug text-slate-400 dark:text-slate-500"
-                title="Roll-to-the-end view: total chain credit over the opening sale this cycle is working toward. Best case, not banked — it lands only if the open leg expires worthless; an early assignment or a buyback above the credit reduces it."
-              >
-                {headline.beyondOpener > 0 ? "+" : ""}{money(headline.beyondOpener)} gathered beyond the {money(headline.opener)} opener
-              </div>
-            )}
-          </div>
+          ))}
         </div>
 
         <ol className="relative ml-3 border-l border-slate-200 dark:border-slate-700">
