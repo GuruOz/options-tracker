@@ -46,6 +46,172 @@ export interface Meta {
   disclaimer: string;
 }
 
+// --- Finance-tracker (net worth / owners) ---
+
+export type AccountKind = "ibkr" | "cpf" | "endowus";
+
+export interface OwnerAccount {
+  account_id: string;
+  kind: AccountKind;
+  label: string;
+}
+
+export interface OwnerInfo {
+  owner: string;
+  label: string;
+  accounts: OwnerAccount[];
+}
+
+export interface OwnersResponse {
+  owners: OwnerInfo[];
+}
+
+/** One net-worth source (ibkr/cpf/endowus) for one owner. */
+export interface NetWorthSource {
+  value: number | null; // native when a single currency, else = converted
+  currency: string;
+  converted: number | null; // always in the requested target, when resolvable
+  as_of: string | null;
+  breakdown?: Record<string, number>; // CPF: OA/SA/MA
+  by_funding_source?: Record<string, number>; // Endowus
+  by_asset_class?: Record<string, number>; // Endowus
+}
+
+export interface NetWorthOwner {
+  owner: string;
+  label: string;
+  total_converted: number | null;
+  sources: Partial<Record<AccountKind, NetWorthSource>>;
+}
+
+export interface NetWorthResponse {
+  as_of_generated: string;
+  target_currency: string;
+  owners: NetWorthOwner[];
+  combined: { total_converted: number | null };
+}
+
+// --- Statement uploads ---
+
+export type StatementSource = "cpf" | "endowus";
+
+export interface StatementSummary {
+  balances: number;
+  transactions: number;
+  holdings: number;
+  warnings: string[];
+}
+
+export interface StatementUploadResult {
+  status: "ok" | "duplicate" | "error";
+  message?: string;
+  account_id?: string;
+  period?: [string | null, string | null];
+  balances?: number;
+  transactions?: number;
+  holdings?: number;
+  warnings?: string[];
+}
+
+export interface StatementLogEntry {
+  id: number;
+  account_id: string;
+  source: StatementSource;
+  filename: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  uploaded_at: string | null;
+  summary: StatementSummary | null;
+}
+
+export interface StatementsResponse {
+  statements: StatementLogEntry[];
+}
+
+// --- Net-worth history + holdings ---
+
+export interface NetWorthHistoryPoint {
+  month: string; // "YYYY-MM-01"
+  ibkr: number;
+  cpf: number;
+  endowus: number;
+  total: number;
+}
+
+export interface NetWorthHistoryResponse {
+  target_currency: string;
+  series: NetWorthHistoryPoint[];
+}
+
+export interface HoldingRow {
+  account_id: string;
+  owner: string | null;
+  goal_name: string | null;
+  fund_name: string | null;
+  asset_class: string | null;
+  funding_source: string | null;
+  units: number | null;
+  nav: number | null;
+  market_value: number | null;
+  converted: number | null;
+  allocation_pct: number | null;
+  currency: string;
+  as_of: string | null;
+}
+
+export interface HoldingsResponse {
+  target_currency: string;
+  holdings: HoldingRow[];
+  goal_totals: Record<string, number>;
+}
+
+// --- FIRE plan + cashflow ---
+
+export interface PlanSettings {
+  current_age: number;
+  retire_age: number;
+  target_monthly_income: number;
+  swr_pct: number;
+  expected_return_pct: number;
+  pessimistic_return_pct: number;
+  optimistic_return_pct: number;
+  inflation_pct: number;
+  monthly_savings_override: number | null;
+}
+
+export interface PlanSettingsResponse {
+  owner: string;
+  data: PlanSettings;
+}
+
+export interface CashflowEntry {
+  month: string; // "YYYY-MM-01"
+  income: number | null;
+  expenses: number | null;
+  note: string | null;
+}
+
+export interface CashflowResponse {
+  owner: string;
+  entries: CashflowEntry[];
+}
+
+// --- AI advisor ---
+
+export interface AdvisorConfig {
+  provider: string | null;
+  model: string | null;
+  base_url: string | null;
+  key_set: boolean;
+}
+
+export interface AdvisorSuggestion {
+  id?: number;
+  created_at?: string | null;
+  content?: string;
+  model?: string | null;
+}
+
 export interface Position {
   conid: number;
   symbol: string | null;

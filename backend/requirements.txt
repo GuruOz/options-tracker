@@ -17,6 +17,9 @@ docker==7.2.0
 python-multipart==0.0.32
 argon2-cffi==25.1.0
 defusedxml==0.7.1
+pypdf==6.14.2
+anthropic==0.117.0
+cryptography==49.0.0
 
 # Transitive deps pinned because the analytics rely on them directly (Black-
 # Scholes / market history) and yfinance's resolver can otherwise drift them.

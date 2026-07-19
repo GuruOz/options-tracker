@@ -15,8 +15,10 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -38,6 +40,13 @@ class Account(Base):
     label: Mapped[str | None] = mapped_column(String(128))
     base_currency: Mapped[str | None] = mapped_column(String(8))
     is_paper: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # What feeds this account: 'ibkr' (live gateway), 'cpf' or 'endowus'
+    # (statement-upload synthetic accounts). The whole household net-worth view is
+    # additive over kinds; the options analytics only ever query kind='ibkr'.
+    kind: Mapped[str] = mapped_column(String(16), default="ibkr", server_default="ibkr")
+    # Which person this account belongs to ('guru' / 'wife' / ...). Null for IBKR
+    # rows until assigned — the owner map falls back to the account's gateway id.
+    owner: Mapped[str | None] = mapped_column(String(32))
     first_seen: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -329,6 +338,195 @@ class IncomeAdjustment(Base):
     __table_args__ = (
         UniqueConstraint("account_id", "month", name="uq_income_account_month"),
     )
+
+
+class StatementUpload(Base):
+    """One uploaded CPF/Endowus statement PDF. `file_sha256` is unique so the
+    same file re-uploaded is a no-op (idempotent ingestion)."""
+
+    __tablename__ = "statement_uploads"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("accounts.account_id"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(16))  # cpf | endowus
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+    filename: Mapped[str | None] = mapped_column(String(256))
+    file_sha256: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    summary: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class ExternalBalance(Base):
+    """A point-in-time balance snapshot for a non-IBKR account: CPF sub-account
+    (OA/SA/MA) closing balances, or an Endowus goal ending balance. The household
+    net worth sums the latest of these per account (never double-counting a CPF
+    investment that now lives in Endowus)."""
+
+    __tablename__ = "external_balances"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("accounts.account_id"), index=True
+    )
+    as_of: Mapped[date] = mapped_column(Date)
+    category: Mapped[str] = mapped_column(String(64))  # OA|SA|MA | goal name | TOTAL
+    balance: Mapped[float | None] = mapped_column(Money)
+    currency: Mapped[str] = mapped_column(String(8), default="SGD", server_default="SGD")
+    upload_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("statement_uploads.id")
+    )
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "as_of", "category", name="uq_ext_bal"),
+        Index("ix_ext_bal_account_asof", "account_id", "as_of"),
+    )
+
+
+class CpfTransaction(Base):
+    """One CPF ledger row (contribution, housing, investment, interest, ...).
+    Deduped by (account, row_hash) so overlapping statements don't double-insert."""
+
+    __tablename__ = "cpf_transactions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("accounts.account_id"), index=True
+    )
+    txn_date: Mapped[date] = mapped_column(Date)
+    code: Mapped[str] = mapped_column(String(8))
+    for_month: Mapped[date | None] = mapped_column(Date)
+    ref: Mapped[str | None] = mapped_column(String(8))
+    oa_amount: Mapped[float | None] = mapped_column(Money)
+    sa_amount: Mapped[float | None] = mapped_column(Money)
+    ma_amount: Mapped[float | None] = mapped_column(Money)
+    upload_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("statement_uploads.id")
+    )
+    row_hash: Mapped[str] = mapped_column(String(64))
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "row_hash", name="uq_cpf_txn"),
+        Index("ix_cpf_txn_account_date", "account_id", "txn_date"),
+    )
+
+
+class ExternalHolding(Base):
+    """An Endowus per-fund snapshot (fund, asset class, funding source, units,
+    NAV, market value, allocation %). Backs the allocation breakdown; the money
+    total comes from `ExternalBalance` goal balances, not from summing these."""
+
+    __tablename__ = "external_holdings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("accounts.account_id"), index=True
+    )
+    as_of: Mapped[date] = mapped_column(Date)
+    goal_name: Mapped[str | None] = mapped_column(String(128))
+    fund_name: Mapped[str | None] = mapped_column(String(256))
+    asset_class: Mapped[str | None] = mapped_column(String(64))
+    funding_source: Mapped[str | None] = mapped_column(String(32))
+    units: Mapped[float | None] = mapped_column(Money)
+    nav: Mapped[float | None] = mapped_column(Money)
+    avg_price: Mapped[float | None] = mapped_column(Money)
+    market_value: Mapped[float | None] = mapped_column(Money)
+    allocation_pct: Mapped[float | None] = mapped_column(Money)
+    currency: Mapped[str] = mapped_column(String(8), default="SGD", server_default="SGD")
+    upload_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("statement_uploads.id")
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "as_of", "goal_name", "fund_name", "funding_source",
+            name="uq_ext_holding",
+        ),
+        Index("ix_ext_holding_account_asof", "account_id", "as_of"),
+    )
+
+
+class DashboardLayout(Base):
+    """The saved home-dashboard widget layout for one scope ('all' or an owner
+    slug). One row per scope; the frontend falls back to a default layout when a
+    scope has none."""
+
+    __tablename__ = "dashboard_layouts"
+
+    scope: Mapped[str] = mapped_column(String(32), primary_key=True)
+    layout: Mapped[dict] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CashflowEntry(Base):
+    """Simple monthly income/expenses per owner (or 'household'). Feeds the FIRE
+    projection's savings rate. One row per (owner, month)."""
+
+    __tablename__ = "cashflow_entries"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner: Mapped[str] = mapped_column(String(32), index=True)
+    month: Mapped[date] = mapped_column(Date)  # first of month
+    income: Mapped[float | None] = mapped_column(Money)
+    expenses: Mapped[float | None] = mapped_column(Money)
+    note: Mapped[str | None] = mapped_column(String(256))
+
+    __table_args__ = (
+        UniqueConstraint("owner", "month", name="uq_cashflow_owner_month"),
+    )
+
+
+class PlanSettings(Base):
+    """FIRE-planning inputs for one owner (or 'household'): ages, target income,
+    withdrawal rate, expected/pessimistic/optimistic returns. JSON blob so the
+    parameter set can grow without a migration."""
+
+    __tablename__ = "plan_settings"
+
+    owner: Mapped[str] = mapped_column(String(32), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AiConfig(Base):
+    """BYO-key config for the AI advisor (single row, id=1). The API key is
+    stored Fernet-encrypted and never returned to the client."""
+
+    __tablename__ = "ai_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    provider: Mapped[str | None] = mapped_column(String(16))  # anthropic | openai_compat
+    base_url: Mapped[str | None] = mapped_column(String(256))
+    model: Mapped[str | None] = mapped_column(String(64))
+    api_key_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AiSuggestion(Base):
+    """A generated set of suggested moves. `input_summary` is the anonymized
+    payload actually sent to the model (audit trail)."""
+
+    __tablename__ = "ai_suggestions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    owner: Mapped[str] = mapped_column(String(32), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    provider: Mapped[str | None] = mapped_column(String(16))
+    model: Mapped[str | None] = mapped_column(String(64))
+    content: Mapped[str | None] = mapped_column(Text)
+    input_summary: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class Setting(Base):

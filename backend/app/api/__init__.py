@@ -9,17 +9,22 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import require_auth
 from app.api.routes import (
+    advisor,
     auth,
     contracts,
+    dashboard,
     diagnostics,
     fx,
     health,
     income,
     market,
+    networth,
+    planning,
     portfolio,
     risk,
     session,
     settings,
+    statements,
 )
 
 public_router = APIRouter()
@@ -35,5 +40,10 @@ api_router.include_router(portfolio.router)
 api_router.include_router(market.router)
 api_router.include_router(risk.router)
 api_router.include_router(income.router)
+api_router.include_router(networth.router)
+api_router.include_router(statements.router)
+api_router.include_router(dashboard.router)
+api_router.include_router(planning.router)
+api_router.include_router(advisor.router)
 api_router.include_router(fx.router)
 api_router.include_router(diagnostics.router)

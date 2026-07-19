@@ -24,6 +24,7 @@ def test_all_api_routes_require_auth():
             path.replace("{gateway_id}", "user1")
             .replace("{chain_id}", "x")
             .replace("{conid}", "1")
+            .replace("{statement_id}", "1")
         )
         r = client.request(method, concrete)
         assert r.status_code == 401, f"{method} {path} -> {r.status_code}"

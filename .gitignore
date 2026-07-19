@@ -39,3 +39,7 @@ opencode.json
 # Personal trade data — source of truth for P&L reconciliation, kept local only.
 # The reconciliation anchors live in backend/tests/test_excel_reconciliation.py.
 docs/*.xlsx
+
+# Local tooling + sensitive test statements (never publish real financial PDFs)
+.claude/
+backend/tests/fixtures/
