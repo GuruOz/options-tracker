@@ -93,7 +93,7 @@ export const chainHeadline = (c: RollChain) => {
   };
 };
 
-export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onClose: () => void }) {
+export function ChainTimeline({ chain, onClose, currency = "USD" }: { chain: RollChain | null; onClose: () => void; currency?: string }) {
   if (!chain) return null;
 
   const legs = chain.legs ?? [];
@@ -167,6 +167,7 @@ export function ChainTimeline({ chain, onClose }: { chain: RollChain | null; onC
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               Opened {chain.opened_at ? new Date(chain.opened_at).toLocaleDateString() : "—"}
               {chain.closed_at ? ` · Closed ${new Date(chain.closed_at).toLocaleDateString()}` : ""}
+              {` · amounts in ${currency}`}
             </p>
           </div>
         </div>

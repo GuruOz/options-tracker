@@ -4,12 +4,14 @@ import { getJSON, withAccount } from "../api/client";
 import type { Position } from "../api/types";
 import { useAccount } from "../hooks/useAccount";
 import { bsPrice, impliedVol, intrinsic, normalizeIv } from "../lib/options";
+import { fmtCode } from "../lib/money";
 
 const MS_DAY = 86_400_000;
 
 const fmtDate = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 const fmtDay = (d: Date) => d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
-const signedMoney = (v: number) => (v < 0 ? "−$" : "$") + Math.round(Math.abs(v)).toLocaleString();
+// P&L is in the contract's currency (USD for US-listed options), stated with a code.
+const signedMoney = (v: number, ccy = "USD") => fmtCode(v, ccy);
 const signedPct = (v: number) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + "%";
 
 const posLabel = (p: Position) =>
@@ -127,6 +129,7 @@ export function ProfitPanel({
 type ValueMode = "pnl" | "pct";
 
 function ProfitChart({ p }: { p: Position }) {
+  const ccy = p.currency ?? "USD";
   const spot = p.underlying_price!;
   const K = p.strike!;
   const dte = p.dte!;
@@ -240,7 +243,7 @@ function ProfitChart({ p }: { p: Position }) {
             onChange={(e) => setValueMode(e.target.value as ValueMode)}
             className="rounded border border-slate-200 bg-white px-2 py-1 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
           >
-            <option value="pnl">$ Profit/loss</option>
+            <option value="pnl">{ccy} profit/loss</option>
             <option value="pct">% return (on basis)</option>
           </select>
         </Control>
@@ -277,11 +280,11 @@ function ProfitChart({ p }: { p: Position }) {
         <span className="text-slate-500 dark:text-slate-400">
           Now P&amp;L:{" "}
           <span className={`font-semibold tabular-nums ${nowPnl >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-            {signedMoney(nowPnl)}
+            {signedMoney(nowPnl, ccy)}
           </span>
         </span>
         <span className="text-slate-500 dark:text-slate-400">
-          Max profit ≈ <span className="tabular-nums">{signedMoney(maxProfit)}</span>
+          Max profit ≈ <span className="tabular-nums">{signedMoney(maxProfit, ccy)}</span>
         </span>
         <span className="text-slate-400 dark:text-slate-500">
           IV {(sigma * 100).toFixed(1)}%{ivChange !== 0 ? ` (${ivChange > 0 ? "+" : ""}${ivChange}%)` : usingModelIv ? " (quoted)" : " (implied)"}
@@ -345,7 +348,7 @@ function ProfitChart({ p }: { p: Position }) {
           </div>
           <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
             {cell ? (
-              <CellDetail cell={cell} pnlAt={pnlAt} entry={entry} dateFor={dateFor} />
+              <CellDetail cell={cell} pnlAt={pnlAt} entry={entry} dateFor={dateFor} ccy={ccy} />
             ) : (
               <span className="text-slate-400">Click a cell to see that exit in detail.</span>
             )}
@@ -359,6 +362,7 @@ function ProfitChart({ p }: { p: Position }) {
           dte={dte}
           pnlAt={pnlAt}
           dateFor={dateFor}
+          ccy={ccy}
         />
       )}
 
@@ -397,11 +401,13 @@ function CellDetail({
   pnlAt,
   entry,
   dateFor,
+  ccy,
 }: {
   cell: { price: number; days: number };
   pnlAt: (price: number, days: number) => number;
   entry: number;
   dateFor: (days: number) => Date;
+  ccy: string;
 }) {
   const pnl = pnlAt(cell.price, cell.days);
   const pct = (pnl / Math.abs(entry)) * 100;
@@ -412,7 +418,7 @@ function CellDetail({
       <span className="font-semibold text-slate-700 dark:text-slate-200">{when}</span>
       {cell.days > 0 ? ` (${cell.days}d left)` : ""}:{" "}
       <span className={`font-semibold ${pnl >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-        {signedMoney(pnl)}
+        {signedMoney(pnl, ccy)}
       </span>{" "}
       <span className="text-slate-400">({signedPct(pct)} on basis)</span>
     </span>
@@ -426,6 +432,7 @@ function PayoffCurve({
   dte,
   pnlAt,
   dateFor,
+  ccy,
 }: {
   priceMin: number;
   priceMax: number;
@@ -433,6 +440,7 @@ function PayoffCurve({
   dte: number;
   pnlAt: (price: number, days: number) => number;
   dateFor: (days: number) => Date;
+  ccy: string;
 }) {
   const uid = useId().replace(/:/g, "");
   const W = 760,
@@ -513,7 +521,7 @@ function PayoffCurve({
           <g key={v}>
             <line x1={padL} y1={toY(v)} x2={W - padR} y2={toY(v)} className={v === 0 ? "stroke-slate-400 dark:stroke-slate-500" : "stroke-slate-100 dark:stroke-slate-800"} strokeWidth={1} />
             <text x={padL - 6} y={toY(v) + 3} textAnchor="end" className="fill-slate-400 text-[9px]">
-              {signedMoney(v)}
+              {signedMoney(v, ccy)}
             </text>
           </g>
         ))}
@@ -568,11 +576,11 @@ function PayoffCurve({
           <span className="tabular-nums">
             @ ${hoverX.toFixed(2)}: today{" "}
             <span className={hoverTodayPnl! >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
-              {signedMoney(hoverTodayPnl!)}
+              {signedMoney(hoverTodayPnl!, ccy)}
             </span>{" "}
             · expiry{" "}
             <span className={hoverExpPnl! >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
-              {signedMoney(hoverExpPnl!)}
+              {signedMoney(hoverExpPnl!, ccy)}
             </span>
           </span>
         )}

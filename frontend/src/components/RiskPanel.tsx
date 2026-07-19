@@ -3,15 +3,13 @@ import { getJSON, withAccount } from "../api/client";
 import type { Risk } from "../api/types";
 import { useAccount } from "../hooks/useAccount";
 import { useDisplayCurrency } from "../hooks/useDisplayCurrency";
+import { fmtCode } from "../lib/money";
 
-// "$" for USD (the app's historical default), "SGD " style for anything else.
-const money = (v: number | null | undefined, signed = false, currency = "USD") => {
-  if (v == null) return "—";
-  const sym = currency === "USD" ? "$" : `${currency} `;
-  const s = Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (v < 0) return `−${sym}${s}`;
-  return signed ? `+${sym}${s}` : `${sym}${s}`;
-};
+// Every figure carries its ISO currency code — a risk panel mixes the account's
+// base currency (net liq, cash) with the position/exposure currency (scenario
+// P&L, deltas, obligation), which can differ (e.g. an SGD account trading USD).
+const money = (v: number | null | undefined, signed = false, currency = "USD") =>
+  fmtCode(v, currency, { signed });
 const pct = (v: number | null | undefined, d = 1) =>
   v == null ? "—" : `${(v * 100).toFixed(d)}%`;
 
@@ -98,9 +96,12 @@ export function RiskPanel() {
         })`,
     )
     .join(" · ");
-  // Combined figures are converted into the display currency; a single
-  // account keeps its own (historically rendered with a bare "$").
-  const ccy = data.display_currency ?? "USD";
+  // Base currency backs account totals (net liq, cash); the exposure currency
+  // backs position-derived figures (scenario P&L, deltas, obligation). They can
+  // differ for one account (SGD base holding USD options). When the combined
+  // view converted everything, display_currency is the single currency for all.
+  const baseCcy = data.display_currency ?? data.base_currency ?? "USD";
+  const expCcy = data.display_currency ?? data.exposure_currency ?? data.base_currency ?? "USD";
 
   const movePct = `${(data.scenario_move * 100).toFixed(0)}%`;
   const scenarioTone = (data.scenario_pnl ?? 0) < 0 ? "bad" : "good";
@@ -150,15 +151,15 @@ export function RiskPanel() {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
-          label={`Net liquidation${data.display_currency ? ` (${data.display_currency})` : ""}`}
-          value={money(data.net_liquidation, false, ccy)}
-          sub={equityChange != null ? `${equityChange >= 0 ? "▲" : "▼"} ${money(equityChange, true)} over window` : undefined}
+          label={`Net liquidation (${baseCcy})`}
+          value={money(data.net_liquidation, false, baseCcy)}
+          sub={equityChange != null ? `${equityChange >= 0 ? "▲" : "▼"} ${money(equityChange, true, baseCcy)} over window` : undefined}
           title="Current account net liquidation value."
         />
         <Stat
-          label={`${data.index_symbol ?? "Index"} ${movePct} scenario`}
-          value={money(data.scenario_pnl, false, ccy)}
-          sub={`${pct(data.scenario_pnl_pct)} of net liq · β-weighted Δ ${money(data.beta_weighted_delta_dollars, false, ccy)}`}
+          label={`${data.index_symbol ?? "Index"} ${movePct} scenario (${expCcy})`}
+          value={money(data.scenario_pnl, false, expCcy)}
+          sub={`${pct(data.scenario_pnl_pct)} of net liq · β-weighted Δ ${money(data.beta_weighted_delta_dollars, false, expCcy)}`}
           tone={scenarioTone}
           title={`Estimated P&L if ${data.index_symbol ?? "the index"} moves ${movePct}, using beta-weighted dollar delta. First-order linear estimate.`}
         />
@@ -168,7 +169,7 @@ export function RiskPanel() {
           sub={
             data.assignment.short_put_count === 0
               ? "No short puts"
-              : `${money(data.assignment.cash, false, ccy)} cash / ${money(data.assignment.total_obligation, false, ccy)} obligation${
+              : `${money(data.assignment.cash, false, baseCcy)} cash / ${money(data.assignment.total_obligation, false, expCcy)} obligation${
                   isCombined ? " · pooled" : ""
                 }`
           }
@@ -231,7 +232,7 @@ export function RiskPanel() {
       {top.length > 0 && (
         <div className="mt-4">
           <div className="mb-1 text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">
-            Largest contributors to {movePct} scenario
+            Largest contributors to {movePct} scenario · amounts in {expCcy}
           </div>
           <table className="w-full text-sm">
             <thead>
@@ -253,14 +254,14 @@ export function RiskPanel() {
                     β {c.beta?.toFixed(2) ?? "—"}
                   </td>
                   <td className="pr-3 text-right tabular-nums text-slate-500 dark:text-slate-400" title="Beta-weighted dollar delta">
-                    {money(c.beta_weighted_delta_dollars)}
+                    {money(c.beta_weighted_delta_dollars, false, expCcy)}
                   </td>
                   <td
                     className={`text-right tabular-nums ${
                       (c.scenario_pnl ?? 0) < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"
                     }`}
                   >
-                    {money(c.scenario_pnl)}
+                    {money(c.scenario_pnl, false, expCcy)}
                   </td>
                 </tr>
               ))}

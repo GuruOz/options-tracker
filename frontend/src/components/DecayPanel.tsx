@@ -3,11 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { getJSON, withAccount } from "../api/client";
 import type { Position } from "../api/types";
 import { useAccount } from "../hooks/useAccount";
+import { fmtCode } from "../lib/money";
 
 const MS_DAY = 86_400_000;
 
 const fmtDate = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-const fmtMoney = (v: number) => "$" + v.toLocaleString(undefined, { maximumFractionDigits: 0 });
 
 // A short, human label for a position chip: "QQQ 450P".
 const posLabel = (p: Position) =>
@@ -101,6 +101,8 @@ export function DecayPanel({
 
 function DecayChart({ p }: { p: Position }) {
   const curve = p.decay_curve!;
+  const ccy = p.currency ?? "USD";
+  const fmtMoney = (v: number) => fmtCode(v, ccy);
   const contracts = p.position != null ? Math.abs(p.position) : 1;
   const W = 760,
     H = 300,

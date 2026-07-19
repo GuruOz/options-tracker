@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { getJSON, withAccount } from "../api/client";
 import type { Position, RollChain } from "../api/types";
 import { useAccount } from "../hooks/useAccount";
-import { ChainTimeline, chainLabel, money, isAssignedOpenChain } from "./ChainTimeline";
+import { ChainTimeline, chainLabel, isAssignedOpenChain } from "./ChainTimeline";
+import { commonCurrency, fmtCode } from "../lib/money";
 
 function AssignmentAlert({ chain, onOpen }: { chain: RollChain; onOpen: () => void }) {
   const stockLeg = (chain.legs ?? []).find((l) => l.role === "assignment_stock");
@@ -38,6 +39,7 @@ function AssignmentAlert({ chain, onOpen }: { chain: RollChain; onOpen: () => vo
 }
 
 function AlertItem({ position }: { position: Position }) {
+  const ccy = position.currency ?? "USD";
   let icon = "ℹ️";
   let color = "bg-slate-100 border-slate-200 text-slate-800 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200";
   let title = "Alert";
@@ -51,8 +53,8 @@ function AlertItem({ position }: { position: Position }) {
     // current leg's own capture % is not the number worth acting on.
     message =
       position.chain_captured_pct != null
-        ? `Closing this chain now banks ${money(position.chain_profit_if_closed)} of the ${money(
-            position.chain_initial_credit
+        ? `Closing this chain now banks ${fmtCode(position.chain_profit_if_closed, ccy)} of the ${fmtCode(
+            position.chain_initial_credit, ccy
           )} premium it's working toward — ${(position.chain_captured_pct * 100).toFixed(1)}% captured.`
         : `You have captured ${(position.premium_captured_pct! * 100).toFixed(1)}% of the premium. Consider closing to secure profit.`;
   } else if (position.status === "AT RISK") {
@@ -112,6 +114,7 @@ export function AlertsPanel() {
   });
 
   const alerts = data ?? [];
+  const alertsCcy = commonCurrency(alerts) ?? "USD";
   // Chains holding stock from an assignment surface as their own alert until the
   // shares are sold (the chain closes) — that's the correct "action" lifetime.
   const assigned = (chains ?? []).filter(isAssignedOpenChain);
@@ -142,7 +145,7 @@ export function AlertsPanel() {
         ))}
       </div>
 
-      <ChainTimeline chain={timelineChain} onClose={() => setTimelineChain(null)} />
+      <ChainTimeline chain={timelineChain} onClose={() => setTimelineChain(null)} currency={alertsCcy} />
     </section>
   );
 }

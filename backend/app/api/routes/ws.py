@@ -15,9 +15,16 @@ router = APIRouter()
 async def websocket_endpoint(ws: WebSocket) -> None:
     # Same-origin check + session-cookie auth, both before accept() — an
     # unauthenticated client never gets a handshake.
+    #
+    # Compare hostnames only, not host:port. Behind the reverse proxy the
+    # browser's Origin carries the published port (e.g. host:1337) while nginx
+    # forwards a Host header whose port has been stripped, so an exact netloc
+    # match would reject every connection when the app is served on a
+    # non-standard port. The hostname still has to match, so a genuinely
+    # cross-site origin is still refused.
     origin = ws.headers.get("origin")
     host = ws.headers.get("host", "")
-    if origin and urlparse(origin).netloc != host:
+    if origin and urlparse(origin).hostname != host.split(":")[0]:
         await ws.close(code=4403)
         return
 

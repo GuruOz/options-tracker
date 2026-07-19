@@ -9,12 +9,15 @@ import { rateFor, useFxRates } from "../hooks/useFxRates";
 // Falls back to USD when an account's base currency hasn't been reported yet
 // (e.g. a brand-new account before its first summary poll) - matches the
 // pre-currency-tracking behavior rather than showing something worse.
+// Always show the ISO code (USD 1,234), never a bare "$" — a household with a
+// USD-base and an SGD-base account must never leave a figure's currency in doubt.
 const money = (v: number | null | undefined, currency = "USD") =>
   v == null
     ? "—"
     : v.toLocaleString(undefined, {
         style: "currency",
         currency,
+        currencyDisplay: "code",
         maximumFractionDigits: 0,
       });
 

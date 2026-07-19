@@ -6,6 +6,7 @@ import { ALL_ACCOUNTS, useAccount } from "../hooks/useAccount";
 // `chainLabel` ("NVDA 216P") and `money` live in ./ChainTimeline so the timeline
 // and alerts panel can share the same formatting.
 import { ChainTimeline, money, chainLabel, chainHeadline, isAssignedOpenChain } from "./ChainTimeline";
+import { commonCurrency } from "../lib/money";
 
 const num = (v: number | null, d = 2) => (v == null ? "—" : v.toFixed(d));
 const percent = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
@@ -54,6 +55,11 @@ export function PositionsPanel({
   });
 
   const rows = positions ?? [];
+  // Position/premium figures are in the contract currency (USD for US-listed),
+  // never the account base currency — declared once atop the table so every
+  // cell reads unambiguously without repeating the code on each number.
+  const posCcy = commonCurrency(rows) ?? "USD";
+  const tradeCcy = commonCurrency(optionTrades ?? []) ?? posCcy;
   const chainMap = new Map<string, RollChain>();
   for (const c of chains ?? []) {
     chainMap.set(c.chain_id, c);
@@ -89,6 +95,11 @@ export function PositionsPanel({
           <span className="text-sm font-normal text-slate-400 dark:text-slate-500">
             ({rows.length}{chainEntries.length > 0 ? ` · ${chainEntries.length} chain${chainEntries.length > 1 ? "s" : ""}` : ""})
           </span>
+          {rows.length > 0 && (
+            <span className="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">
+              · amounts in {posCcy}
+            </span>
+          )}
         </span>
         <button
           onClick={() => {
@@ -123,11 +134,11 @@ export function PositionsPanel({
               <th className="pr-3 text-right" title="Current mark price of the option, per share.">Last</th>
               <th className="pr-3 text-right" title="Live spot price of the underlying stock/ETF. Only shown for tracked underlyings.">Spot</th>
               <th className="pr-3 text-right" title="Your average entry price per share (avg cost / 100).">My Avg</th>
-              <th className="pr-3 text-right" title="In-the-money value: total $ across all contracts (per-share intrinsic x 100 x |qty|). Needs the spot price.">Intrinsic ($)</th>
-              <th className="pr-3 text-right" title="Time value remaining: total $ across all contracts (mark - intrinsic, x 100 x |qty|). This is what decays to zero by expiry.">Extrinsic ($)</th>
+              <th className="pr-3 text-right" title="In-the-money value: total across all contracts (per-share intrinsic x 100 x |qty|), in the contract currency. Needs the spot price.">Intrinsic</th>
+              <th className="pr-3 text-right" title="Time value remaining: total across all contracts (mark - intrinsic, x 100 x |qty|), in the contract currency. This is what decays to zero by expiry.">Extrinsic</th>
               <th className="pr-3 text-right" title="Distance from spot to strike. Put: (spot - strike) / spot. Call: (strike - spot) / spot. Measures room before the strike - independent of P&L. The smaller 'BE' line is the cushion to your break-even (strike ∓ premium collected) - the real buffer before a loss.">Cushion</th>
               <th className="pr-3 text-right" title="For a rolled position: what closing the whole chain now nets, as a % of the premium the chain is working toward (its opening sale). The smaller 'leg' line is the same measure for the current leg alone — a roll re-sells a fatter premium, so the leg reads high long before the trade is done. Standalone positions show the leg figure only.">Captured</th>
-              <th className="pr-3 text-right" title="Unrealized profit/loss on the position, in account currency.">Unreal P&amp;L</th>
+              <th className="pr-3 text-right" title="Unrealized profit/loss on the position, in the contract's own currency (see the currency noted above the table).">Unreal P&amp;L</th>
               <th className="pr-3 text-right" title="Delta - per-share price sensitivity to a $1 move in the underlying.">Δ</th>
               <th className="text-right" title="Theta - estimated daily time decay, per share.">Θ</th>
             </tr>
@@ -181,7 +192,7 @@ export function PositionsPanel({
                     <th className="pr-3 text-right">Legs</th>
                     <th className="pr-3 text-right">Opened</th>
                     <th className="pr-3 text-right">Closed</th>
-                    <th className="text-right">Cumulative credit</th>
+                    <th className="text-right">Cumulative credit ({posCcy})</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -222,7 +233,7 @@ export function PositionsPanel({
           <span className={`transform transition-transform ${showTrades ? "rotate-90" : ""}`}>&#9654;</span>
           Option trades
           <span className="text-xs font-normal text-slate-400">
-            ({(optionTrades ?? []).length} total)
+            ({(optionTrades ?? []).length} total · price &amp; comm in {tradeCcy})
           </span>
         </button>
         {showTrades && (
@@ -315,7 +326,7 @@ export function PositionsPanel({
         )}
       </div>
 
-      <ChainTimeline chain={timelineChain} onClose={() => setTimelineChain(null)} />
+      <ChainTimeline chain={timelineChain} onClose={() => setTimelineChain(null)} currency={posCcy} />
     </section>
   );
 }

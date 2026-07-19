@@ -141,7 +141,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 function StatRow({ m }: { m: Market }) {
   return (
     <div className="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
-      <Stat label="Spot" value={m.price != null ? fmtPrice(m.price) : "—"} />
+      <Stat label="Spot (USD)" value={m.price != null ? fmtPrice(m.price) : "—"} />
       <Stat label="IV" value={m.iv != null ? `${fmtNum(m.iv)}%` : "—"} />
       <Stat label="RV (20d)" value={m.realized_vol != null ? `${fmtNum(m.realized_vol)}%` : "—"} />
       <Stat label="IV %ile" value={m.iv_percentile != null ? fmtNum(m.iv_percentile, 0) : "—"} />

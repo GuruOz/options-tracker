@@ -4,15 +4,12 @@ import { getJSON, putJSON, withAccount } from "../api/client";
 import type { Income, IncomeMonth } from "../api/types";
 import { useAccount } from "../hooks/useAccount";
 import { useDisplayCurrency } from "../hooks/useDisplayCurrency";
+import { fmtCode } from "../lib/money";
 
-// "$" for USD (the app's historical default), "SGD " style for anything else.
-const money = (v: number | null | undefined, signed = false, currency = "USD") => {
-  if (v == null) return "—";
-  const sym = currency === "USD" ? "$" : `${currency} `;
-  const s = Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (v < 0) return `−${sym}${s}`;
-  return signed ? `+${sym}${s}` : `${sym}${s}`;
-};
+// Every figure carries its ISO code — premium income is in the trades'
+// currency (USD for US-listed options) even when the account's base is SGD.
+const money = (v: number | null | undefined, signed = false, currency = "USD") =>
+  fmtCode(v, currency, { signed });
 const pct = (v: number | null | undefined, d = 0) =>
   v == null ? "—" : `${(v * 100).toFixed(d)}%`;
 
@@ -217,9 +214,10 @@ export function IncomePanel() {
         })`,
     )
     .join(" · ");
-  // Combined figures are converted into the display currency; a single
-  // account keeps its own (historically rendered with a bare "$").
-  const ccy = data.display_currency ?? "USD";
+  // Premium P&L is in the trades' currency; the combined view converts it into
+  // the chosen display currency. Net liq (the yield denominator) is base
+  // currency, but it isn't shown as a money figure here, only as a ratio.
+  const ccy = data.display_currency ?? data.premium_currency ?? "USD";
 
   const saveAdjustment = async (
     month: string,
@@ -264,7 +262,7 @@ export function IncomePanel() {
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Stat
-          label={`All-time${data.display_currency ? ` (${data.display_currency})` : ""}`}
+          label={`All-time (${ccy})`}
           value={money(data.all_time, true, ccy)}
           sub={`${data.closed_count} closed · ${data.open_count} open`}
           tone={data.all_time >= 0 ? "good" : "bad"}
