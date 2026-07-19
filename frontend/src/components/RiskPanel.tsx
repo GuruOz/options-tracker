@@ -2,12 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import { getJSON, withAccount } from "../api/client";
 import type { Risk } from "../api/types";
 import { useAccount } from "../hooks/useAccount";
+import { useDisplayCurrency } from "../hooks/useDisplayCurrency";
 
-const money = (v: number | null | undefined, signed = false) => {
+// "$" for USD (the app's historical default), "SGD " style for anything else.
+const money = (v: number | null | undefined, signed = false, currency = "USD") => {
   if (v == null) return "—";
+  const sym = currency === "USD" ? "$" : `${currency} `;
   const s = Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (v < 0) return `−$${s}`;
-  return signed ? `+$${s}` : `$${s}`;
+  if (v < 0) return `−${sym}${s}`;
+  return signed ? `+${sym}${s}` : `${sym}${s}`;
 };
 const pct = (v: number | null | undefined, d = 1) =>
   v == null ? "—" : `${(v * 100).toFixed(d)}%`;
@@ -66,15 +69,38 @@ function Stat({
 }
 
 export function RiskPanel() {
-  const { selected } = useAccount();
+  const { selected, isAll } = useAccount();
+  const { currency } = useDisplayCurrency();
   const { data } = useQuery({
-    queryKey: ["risk", selected],
-    queryFn: () => getJSON<Risk | null>(withAccount("/api/risk", selected)),
+    queryKey: ["risk", selected, isAll ? currency : null],
+    queryFn: () =>
+      getJSON<Risk | null>(
+        withAccount(isAll ? `/api/risk?currency=${currency}` : "/api/risk", selected),
+      ),
   });
   if (!data) return null;
 
   const perAccount = data.per_account ?? [];
   const isCombined = perAccount.length > 0;
+
+  // Ratios come back converted when a live rate was available; the amber
+  // warning only fires when they were actually suppressed.
+  const ratiosSuppressed =
+    data.currency_mismatch &&
+    data.scenario_pnl_pct == null &&
+    data.assignment.coverage_ratio == null;
+  const fxNote = (data.fx_rates ?? [])
+    .filter((r) => r.source !== "identity")
+    .map(
+      (r) =>
+        `${r.pair} ${r.rate.toFixed(4)} (${r.source}${
+          r.as_of ? `, ${new Date(r.as_of).toLocaleTimeString()}` : ""
+        })`,
+    )
+    .join(" · ");
+  // Combined figures are converted into the display currency; a single
+  // account keeps its own (historically rendered with a bare "$").
+  const ccy = data.display_currency ?? "USD";
 
   const movePct = `${(data.scenario_move * 100).toFixed(0)}%`;
   const scenarioTone = (data.scenario_pnl ?? 0) < 0 ? "bad" : "good";
@@ -104,25 +130,35 @@ export function RiskPanel() {
         <span className="text-xs text-slate-400 dark:text-slate-500">linear estimate — not advice</span>
       </div>
 
-      {data.currency_mismatch && (
+      {ratiosSuppressed ? (
         <p className="mb-3 text-xs text-amber-600 dark:text-amber-400">
           Positions are held in a different currency than the account
-          {data.exposure_currency ? ` (${data.exposure_currency} vs. account currency)` : ""} —
-          scenario P&amp;L % and assignment coverage aren't shown to avoid dividing mismatched currencies.
+          {data.exposure_currency ? ` (${data.exposure_currency} vs. account currency)` : ""} and
+          no live FX rate is available — scenario P&amp;L % and assignment coverage aren't shown
+          to avoid dividing mismatched currencies.
         </p>
+      ) : (
+        data.currency_mismatch &&
+        fxNote && (
+          <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">
+            {data.display_currency
+              ? `Converted to ${data.display_currency} at ${fxNote}`
+              : `Cross-currency ratios converted at ${fxNote}`}
+          </p>
+        )
       )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
-          label="Net liquidation"
-          value={money(data.net_liquidation)}
+          label={`Net liquidation${data.display_currency ? ` (${data.display_currency})` : ""}`}
+          value={money(data.net_liquidation, false, ccy)}
           sub={equityChange != null ? `${equityChange >= 0 ? "▲" : "▼"} ${money(equityChange, true)} over window` : undefined}
           title="Current account net liquidation value."
         />
         <Stat
           label={`${data.index_symbol ?? "Index"} ${movePct} scenario`}
-          value={money(data.scenario_pnl)}
-          sub={`${pct(data.scenario_pnl_pct)} of net liq · β-weighted Δ ${money(data.beta_weighted_delta_dollars)}`}
+          value={money(data.scenario_pnl, false, ccy)}
+          sub={`${pct(data.scenario_pnl_pct)} of net liq · β-weighted Δ ${money(data.beta_weighted_delta_dollars, false, ccy)}`}
           tone={scenarioTone}
           title={`Estimated P&L if ${data.index_symbol ?? "the index"} moves ${movePct}, using beta-weighted dollar delta. First-order linear estimate.`}
         />
@@ -132,7 +168,7 @@ export function RiskPanel() {
           sub={
             data.assignment.short_put_count === 0
               ? "No short puts"
-              : `${money(data.assignment.cash)} cash / ${money(data.assignment.total_obligation)} obligation${
+              : `${money(data.assignment.cash, false, ccy)} cash / ${money(data.assignment.total_obligation, false, ccy)} obligation${
                   isCombined ? " · pooled" : ""
                 }`
           }

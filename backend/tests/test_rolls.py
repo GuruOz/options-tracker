@@ -233,13 +233,16 @@ def test_assignment_attaches_to_rolled_chain():
 # underlying ticker so rolling the same strike to a new expiry stays one chain.
 
 def test_roll_to_new_expiry_same_strike_is_one_chain():
+    # The rolled-to leg must stay OPEN, so its expiry (and the OCC symbol that
+    # encodes it) can't be a fixed calendar date — see _FUTURE_EXPIRY above.
+    occ_future = f"NVDA {_FUTURE_EXPIRY:%y%m%d}P00216000"
     exs = [
         _ex("e1", "S", 101, symbol="NVDA 260618P00216000", strike=216.0,
             price=2.0, t=_T0, expiry=date(2026, 6, 18)),
         _ex("e2", "B", 101, symbol="NVDA 260618P00216000", strike=216.0,
             price=0.5, t=_T0 + timedelta(days=20), expiry=date(2026, 6, 18)),
-        _ex("e3", "S", 102, symbol="NVDA 260718P00216000", strike=216.0,
-            price=2.0, t=_T0 + timedelta(days=20), expiry=date(2026, 7, 18)),
+        _ex("e3", "S", 102, symbol=occ_future, strike=216.0,
+            price=2.0, t=_T0 + timedelta(days=20), expiry=_FUTURE_EXPIRY),
     ]
     chains, legs = build_roll_chains(exs, _ACCT)
     assert len(chains) == 1, "same strike rolled to a new expiry must be one chain"

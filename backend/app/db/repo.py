@@ -86,6 +86,20 @@ async def account_has_foreign_currency_trades(
     return rows.first() is not None
 
 
+async def account_trade_currencies(db: AsyncSession, account_id: str) -> set[str]:
+    """Distinct recorded execution currencies for an account. Executions with
+    no recorded currency are skipped — unknown isn't evidence of anything."""
+    rows = await db.execute(
+        select(Execution.currency)
+        .where(
+            Execution.account_id == account_id,
+            Execution.currency.is_not(None),
+        )
+        .distinct()
+    )
+    return {c for (c,) in rows.all()}
+
+
 async def account_labels(db: AsyncSession) -> dict[str, str]:
     """`{account_id: label}`, falling back to the id when a label is unset."""
     rows = await db.execute(select(Account.account_id, Account.label))

@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 from app.analytics.income import compute_income
+from app.api.routes.income import _combine
 
 
 def _chain(opened, status, credit, open_credit=0.0):
@@ -124,3 +125,93 @@ def test_currency_mismatch_suppresses_yield_not_pnl():
     assert out["yield_pct"] is None
     assert out["all_time"] == 1000.0
     assert out["realized"] == 1000.0
+
+
+def test_currency_mismatch_with_fx_rate_computes_yield():
+    # Same mismatched account, but a live USD->SGD rate lets the yield through.
+    chains = [_chain((2026, 1, 1), "closed", 1000.0)]
+    out = compute_income(
+        chains, [], net_liquidation=50000.0, currency_mismatch=True, fx_rate=1.35,
+    )
+    assert out["currency_mismatch"] is True
+    assert out["yield_pct"] == 1000.0 * 1.35 / 50000.0
+
+
+def _summary(
+    *, base, premium, all_time, net_liq, month_pnl, withdrawn=0.0,
+    mismatch=False, ambiguous=False,
+):
+    """A per-account dict shaped like `_income_for`'s output, for _combine tests."""
+    return {
+        "months": [
+            {"month": "2026-01", "pnl": month_pnl, "chain_count": 1,
+             "cashed_out": False, "withdrawal": None, "note": None},
+        ],
+        "years": [
+            {"year": 2026, "ytd": month_pnl, "withdrawn": withdrawn,
+             "remaining": month_pnl - withdrawn},
+        ],
+        "all_time": all_time,
+        "realized": all_time,
+        "unrealized": 0.0,
+        "win_rate": 1.0,
+        "closed_count": 1,
+        "open_count": 0,
+        "net_liquidation": net_liq,
+        "yield_pct": None,
+        "currency_mismatch": mismatch,
+        "base_currency": base,
+        "premium_currency": premium,
+        "premium_ambiguous": ambiguous,
+        "fx_rates": [],
+    }
+
+
+def test_combine_flags_cross_account_currency_mix_without_rates():
+    # Regression: two internally-consistent accounts with different base
+    # currencies used to slip past the guard and produce a mixed-unit yield.
+    per_account = [
+        _summary(base="USD", premium="USD", all_time=1000.0, net_liq=50_000.0, month_pnl=1000.0),
+        _summary(base="SGD", premium="SGD", all_time=500.0, net_liq=25_000.0, month_pnl=500.0),
+    ]
+    out = _combine(per_account)
+    assert out["currency_mismatch"] is True
+    assert out["yield_pct"] is None
+    assert out["display_currency"] is None
+
+
+def test_combine_converts_before_summing_when_rates_available():
+    per_account = [
+        _summary(base="USD", premium="USD", all_time=1000.0, net_liq=50_000.0,
+                 month_pnl=1000.0),
+        _summary(base="SGD", premium="SGD", all_time=500.0, net_liq=25_000.0,
+                 month_pnl=500.0, withdrawn=100.0),
+    ]
+    out = _combine(
+        per_account,
+        display_currency="USD",
+        rates={"USD": 1.0, "SGD": 0.5},
+        fx_used=[{"pair": "SGD/USD", "rate": 0.5, "as_of": None, "source": "ibkr"}],
+    )
+    assert out["all_time"] == 1000.0 + 250.0
+    assert out["net_liquidation"] == 50_000.0 + 12_500.0
+    assert out["yield_pct"] == 1250.0 / 62_500.0
+    by_month = {m["month"]: m for m in out["months"]}
+    assert by_month["2026-01"]["pnl"] == 1250.0
+    year = next(y for y in out["years"] if y["year"] == 2026)
+    assert year["withdrawn"] == 50.0  # withdrawals convert at the base rate
+    assert out["display_currency"] == "USD"
+    assert out["currency_mismatch"] is True  # provenance flag survives
+    assert out["fx_rates"]
+
+
+def test_combine_ambiguous_premium_blocks_conversion():
+    per_account = [
+        _summary(base="USD", premium="USD", all_time=1000.0, net_liq=50_000.0, month_pnl=1000.0),
+        _summary(base="SGD", premium=None, all_time=500.0, net_liq=25_000.0,
+                 month_pnl=500.0, mismatch=True, ambiguous=True),
+    ]
+    out = _combine(per_account, display_currency="USD", rates={"USD": 1.0, "SGD": 0.5})
+    assert out["display_currency"] is None
+    assert out["yield_pct"] is None
+    assert out["all_time"] == 1500.0  # raw sum, old behavior

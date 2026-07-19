@@ -30,6 +30,7 @@ def compute_income(
     *,
     net_liquidation: float | None = None,
     currency_mismatch: bool = False,
+    fx_rate: float | None = None,
 ) -> dict:
     """Build the income summary.
 
@@ -41,8 +42,9 @@ def compute_income(
     the contract's own currency (e.g. "USD" for US-listed options) and IBKR
     never converts it. `currency_mismatch` should be True when the caller has
     confirmed at least one trade's currency differs from the account's base
-    currency - `yield_pct` is suppressed rather than silently dividing two
-    different currencies.
+    currency. When it is, `fx_rate` (premium currency -> base currency, spot)
+    lets `yield_pct` be computed anyway; without a rate it is suppressed rather
+    than silently dividing two different currencies.
     """
     monthly_pnl: dict[str, float] = defaultdict(float)
     monthly_count: dict[str, int] = defaultdict(int)
@@ -126,8 +128,11 @@ def compute_income(
         "open_count": open_,
         "net_liquidation": float(net_liquidation) if net_liquidation else None,
         "yield_pct": (
-            (all_time / net_liquidation)
-            if net_liquidation and not currency_mismatch
+            (all_time / net_liquidation) if net_liquidation and not currency_mismatch
+            # Spot-rate conversion of the (historical) premium total — an
+            # accepted simplification over per-trade historical rates.
+            else (all_time * fx_rate / net_liquidation)
+            if net_liquidation and fx_rate is not None
             else None
         ),
         "currency_mismatch": currency_mismatch,

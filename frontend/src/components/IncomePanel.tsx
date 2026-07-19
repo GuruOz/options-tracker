@@ -3,12 +3,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getJSON, putJSON, withAccount } from "../api/client";
 import type { Income, IncomeMonth } from "../api/types";
 import { useAccount } from "../hooks/useAccount";
+import { useDisplayCurrency } from "../hooks/useDisplayCurrency";
 
-const money = (v: number | null | undefined, signed = false) => {
+// "$" for USD (the app's historical default), "SGD " style for anything else.
+const money = (v: number | null | undefined, signed = false, currency = "USD") => {
   if (v == null) return "—";
+  const sym = currency === "USD" ? "$" : `${currency} `;
   const s = Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (v < 0) return `−$${s}`;
-  return signed ? `+$${s}` : `$${s}`;
+  if (v < 0) return `−${sym}${s}`;
+  return signed ? `+${sym}${s}` : `${sym}${s}`;
 };
 const pct = (v: number | null | undefined, d = 0) =>
   v == null ? "—" : `${(v * 100).toFixed(d)}%`;
@@ -70,7 +73,7 @@ function Stat({
 }
 
 /** Monthly P&L bars with a zero baseline (no chart lib needed). */
-function MonthlyBars({ months }: { months: IncomeMonth[] }) {
+function MonthlyBars({ months, currency = "USD" }: { months: IncomeMonth[]; currency?: string }) {
   if (months.length === 0) return null;
   const w = Math.max(months.length * 30, 240);
   const h = 130;
@@ -100,7 +103,7 @@ function MonthlyBars({ months }: { months: IncomeMonth[] }) {
               rx={1.5}
               className={m.pnl >= 0 ? "fill-emerald-500" : "fill-red-500"}
             >
-              <title>{`${monthLabel(m.month)}: ${money(m.pnl, true)} (${m.chain_count} chain${m.chain_count === 1 ? "" : "s"})`}</title>
+              <title>{`${monthLabel(m.month)}: ${money(m.pnl, true, currency)} (${m.chain_count} chain${m.chain_count === 1 ? "" : "s"})`}</title>
             </rect>
           </g>
         );
@@ -113,10 +116,12 @@ function MonthRow({
   m,
   onSave,
   readOnly = false,
+  currency = "USD",
 }: {
   m: IncomeMonth;
   onSave: (month: string, body: { cashed_out: boolean; withdrawal_amount: number | null; note: string | null }) => void;
   readOnly?: boolean;
+  currency?: string;
 }) {
   const [cashedOut, setCashedOut] = useState(m.cashed_out);
   const [withdrawal, setWithdrawal] = useState(m.withdrawal != null ? String(m.withdrawal) : "");
@@ -141,7 +146,7 @@ function MonthRow({
     <tr className="border-t border-slate-100 dark:border-slate-700">
       <td className="py-1.5 pr-3 font-medium text-slate-700 dark:text-slate-200">{monthLabel(m.month)}</td>
       <td className={`pr-3 text-right tabular-nums ${m.pnl >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-        {money(m.pnl, true)}
+        {money(m.pnl, true, currency)}
       </td>
       <td className="pr-3 text-right tabular-nums text-slate-400">{m.chain_count}</td>
       <td className="pr-3 text-center">
@@ -186,15 +191,35 @@ function MonthRow({
 export function IncomePanel() {
   const queryClient = useQueryClient();
   const { selected, isAll } = useAccount();
+  const { currency } = useDisplayCurrency();
   const { data } = useQuery({
-    queryKey: ["income", selected],
-    queryFn: () => getJSON<Income>(withAccount("/api/income", selected)),
+    queryKey: ["income", selected, isAll ? currency : null],
+    queryFn: () =>
+      getJSON<Income>(
+        withAccount(isAll ? `/api/income?currency=${currency}` : "/api/income", selected),
+      ),
   });
 
   if (!data || data.months.length === 0) return null;
 
   const byAccount = data.by_account ?? [];
   const isCombined = byAccount.length > 0;
+
+  // Yield comes back converted when a live rate was available; the amber
+  // warning only fires when it was actually suppressed.
+  const yieldSuppressed = data.currency_mismatch && data.yield_pct == null;
+  const fxNote = (data.fx_rates ?? [])
+    .filter((r) => r.source !== "identity")
+    .map(
+      (r) =>
+        `${r.pair} ${r.rate.toFixed(4)} (${r.source}${
+          r.as_of ? `, ${new Date(r.as_of).toLocaleTimeString()}` : ""
+        })`,
+    )
+    .join(" · ");
+  // Combined figures are converted into the display currency; a single
+  // account keeps its own (historically rendered with a bare "$").
+  const ccy = data.display_currency ?? "USD";
 
   const saveAdjustment = async (
     month: string,
@@ -218,19 +243,29 @@ export function IncomePanel() {
       {isCombined && (
         <p className="mb-3 text-xs text-amber-600 dark:text-amber-400">
           Cashed-out flags and withdrawals are per account — pick a specific account to edit them.
-          {" "}Per-account: {byAccount.map((a) => `${a.account_label} ${money(a.all_time, true)}`).join(" · ")}
+          {" "}Per-account: {byAccount.map((a) => `${a.account_label} ${money(a.all_time, true, a.premium_currency ?? "USD")}`).join(" · ")}
         </p>
       )}
-      {data.currency_mismatch && (
+      {yieldSuppressed ? (
         <p className="mb-3 text-xs text-amber-600 dark:text-amber-400">
-          Trades are in a different currency than the account's net liquidation — yield % isn't shown to avoid dividing mismatched currencies.
+          Trades are in a different currency than the account's net liquidation and no live
+          FX rate is available — yield % isn't shown to avoid dividing mismatched currencies.
         </p>
+      ) : (
+        data.currency_mismatch &&
+        fxNote && (
+          <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">
+            {data.display_currency
+              ? `Converted to ${data.display_currency} at ${fxNote}`
+              : `Yield converted at ${fxNote}`}
+          </p>
+        )
       )}
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Stat
-          label="All-time"
-          value={money(data.all_time, true)}
+          label={`All-time${data.display_currency ? ` (${data.display_currency})` : ""}`}
+          value={money(data.all_time, true, ccy)}
           sub={`${data.closed_count} closed · ${data.open_count} open`}
           tone={data.all_time >= 0 ? "good" : "bad"}
           title="Commission-net P&L across every roll chain: finished chains in full, plus what still-open chains have banked from rolling. Premium riding on an open leg is excluded until that leg expires worthless or you buy it back."
@@ -238,16 +273,16 @@ export function IncomePanel() {
         {latestYear && (
           <Stat
             label={`${latestYear.year} YTD`}
-            value={money(latestYear.ytd, true)}
-            sub={`Withdrawn ${money(latestYear.withdrawn)} · Remaining ${money(latestYear.remaining)}`}
+            value={money(latestYear.ytd, true, ccy)}
+            sub={`Withdrawn ${money(latestYear.withdrawn, false, ccy)} · Remaining ${money(latestYear.remaining, false, ccy)}`}
             tone={latestYear.ytd >= 0 ? "good" : "bad"}
             title="This year's income, with manual withdrawals netted out."
           />
         )}
         <Stat
           label="Finished / Open"
-          value={money(data.realized, true)}
-          sub={`${money(data.unrealized, true)} banked on open chains`}
+          value={money(data.realized, true, ccy)}
+          sub={`${money(data.unrealized, true, ccy)} banked on open chains`}
           tone={data.realized >= 0 ? "good" : "bad"}
           title="First figure: chains that are done. Second: what open chains have banked from rolling so far — each roll banks only the decay on the leg it replaced, and the premium on the leg still open counts for nothing until it expires worthless or you close it."
         />
@@ -260,7 +295,7 @@ export function IncomePanel() {
       </div>
 
       <div className="mt-4">
-        <MonthlyBars months={densifyMonths(data.months)} />
+        <MonthlyBars months={densifyMonths(data.months)} currency={ccy} />
       </div>
 
       {data.years.length > 0 && (
@@ -270,12 +305,12 @@ export function IncomePanel() {
               <div className="flex items-baseline justify-between">
                 <span className="font-semibold text-slate-700 dark:text-slate-200">{y.year}</span>
                 <span className={`tabular-nums ${y.ytd >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                  {money(y.ytd, true)}
+                  {money(y.ytd, true, ccy)}
                 </span>
               </div>
               <div className="mt-0.5 flex justify-between text-xs text-slate-500 dark:text-slate-400">
-                <span>Withdrawn {money(y.withdrawn)}</span>
-                <span>Remaining {money(y.remaining)}</span>
+                <span>Withdrawn {money(y.withdrawn, false, ccy)}</span>
+                <span>Remaining {money(y.remaining, false, ccy)}</span>
               </div>
             </div>
           ))}
@@ -296,7 +331,7 @@ export function IncomePanel() {
           </thead>
           <tbody>
             {data.months.map((m) => (
-              <MonthRow key={m.month} m={m} onSave={saveAdjustment} readOnly={isCombined} />
+              <MonthRow key={m.month} m={m} onSave={saveAdjustment} readOnly={isCombined} currency={ccy} />
             ))}
           </tbody>
         </table>

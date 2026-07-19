@@ -181,6 +181,13 @@ class EquityPointOut(BaseModel):
     net_liquidation: float | None = None
 
 
+class FxRateOut(BaseModel):
+    pair: str
+    rate: float
+    as_of: datetime | None = None
+    source: str  # "ibkr" | "public" | "cache" | "identity"
+
+
 class RiskOut(BaseModel):
     scenario_move: float
     index_symbol: str | None = None
@@ -189,12 +196,18 @@ class RiskOut(BaseModel):
     gross_delta_dollars: float | None = None
     scenario_pnl: float | None = None
     scenario_pnl_pct: float | None = None
-    # True when scenario_pnl_pct/assignment.coverage_ratio were suppressed
-    # because a position's currency differs from the account's base currency.
+    # True when a position's currency differs from the account's base currency
+    # (or, combined, when accounts disagree). Ratios are converted through a
+    # live FX rate when one is available and null only when it isn't.
     currency_mismatch: bool = False
     # The common currency of the dollar figures above, when unambiguous
     # (every contributing position agreed on one currency).
     exposure_currency: str | None = None
+    # The account's base currency, and the FX rates used for any conversion.
+    base_currency: str | None = None
+    # Combined view only: the currency everything was converted into.
+    display_currency: str | None = None
+    fx_rates: list[FxRateOut] = []
     assignment: AssignmentOut
     positions: list[RiskPositionOut] = []
     equity_curve: list[EquityPointOut] = []

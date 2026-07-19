@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getJSON } from "./api/client";
 import { useSession } from "./api/useSession";
 import { AccountProvider } from "./hooks/useAccount";
+import { DisplayCurrencyProvider } from "./hooks/useDisplayCurrency";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { useTheme } from "./hooks/useTheme";
 import type { Meta } from "./api/types";
@@ -41,7 +42,9 @@ function Gate() {
   }
   return (
     <AccountProvider>
-      <Dashboard />
+      <DisplayCurrencyProvider>
+        <Dashboard />
+      </DisplayCurrencyProvider>
     </AccountProvider>
   );
 }

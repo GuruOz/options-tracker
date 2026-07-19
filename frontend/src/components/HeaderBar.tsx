@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getJSON, postJSON, withAccount } from "../api/client";
-import type { AccountInfo, AccountSummary, PullResult, SessionMap, SessionState } from "../api/types";
+import type { AccountInfo, AccountSummary, FxResponse, PullResult, SessionMap, SessionState } from "../api/types";
 import { ALL_ACCOUNTS, useAccount } from "../hooks/useAccount";
+import { useDisplayCurrency } from "../hooks/useDisplayCurrency";
+import { rateFor, useFxRates } from "../hooks/useFxRates";
 
 // Falls back to USD when an account's base currency hasn't been reported yet
 // (e.g. a brand-new account before its first summary poll) - matches the
@@ -59,6 +61,33 @@ function sumStat(accounts: AccountInfo[], key: keyof AccountSummary): number | n
     .filter((v): v is number => v != null);
   return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
 }
+
+/** Sum a stat with each account converted into the fx target currency first.
+ * Null when nobody reported one, or when a needed rate is missing (an account
+ * with no recorded currency counts as already-in-target). */
+function sumStatConverted(
+  accounts: AccountInfo[],
+  key: keyof AccountSummary,
+  fx: FxResponse | undefined,
+): number | null {
+  let sum = 0;
+  let any = false;
+  for (const a of accounts) {
+    const v = a[key as keyof AccountInfo] as number | null;
+    if (v == null) continue;
+    const rate = a.base_currency ? rateFor(fx, a.base_currency) : 1;
+    if (rate == null) return null;
+    sum += v * rate;
+    any = true;
+  }
+  return any ? sum : null;
+}
+
+const FX_SOURCE_LABEL: Record<string, string> = {
+  ibkr: "IBKR live",
+  public: "Yahoo",
+  cache: "cached",
+};
 
 /** One user's connection dot, message, and login/logout button. */
 function GatewayControls({
@@ -177,6 +206,7 @@ function GatewayControls({
 
 export function HeaderBar({ sessions }: { sessions: SessionMap }) {
   const { selected, setSelected, accounts, isAll } = useAccount();
+  const { currency: displayCurrency, setCurrency, options: currencyOptions } = useDisplayCurrency();
 
   const { data: account } = useQuery({
     queryKey: ["account", selected],
@@ -196,23 +226,47 @@ export function HeaderBar({ sessions }: { sessions: SessionMap }) {
   const primary = selectedGateway ?? (gateways.length === 1 ? gateways[0] : null);
   const others = gateways.filter((g) => g !== primary);
 
-  const stats: Record<string, number | null> = {};
-  for (const s of STATS) {
-    stats[s.key] = isAll
-      ? sumStat(accounts, s.key)
-      : ((account?.[s.key] as number | null) ?? null);
-  }
-
   // These are account-level totals (net liq, cash, ...) - always in the
   // account's own base currency, never the trade/position currency.
   const selectedCurrency =
     accounts.find((a) => a.account_id === selected)?.base_currency ?? "USD";
 
-  // Summing money across accounts only means something in one currency.
+  // Summing money across accounts only means something in one currency, so a
+  // mixed household converts each account with a live rate before summing.
   const currencies = new Set(
     accounts.map((a) => a.base_currency).filter((c): c is string => !!c),
   );
   const mixedCurrency = isAll && currencies.size > 1;
+  const fx = useFxRates(displayCurrency, mixedCurrency);
+  const fxReady =
+    !mixedCurrency || [...currencies].every((c) => rateFor(fx, c) != null);
+
+  const stats: Record<string, number | null> = {};
+  for (const s of STATS) {
+    stats[s.key] = !isAll
+      ? ((account?.[s.key] as number | null) ?? null)
+      : !mixedCurrency
+        ? sumStat(accounts, s.key)
+        : fxReady
+          ? sumStatConverted(accounts, s.key, fx)
+          : null;
+  }
+  const tileCurrency = isAll
+    ? mixedCurrency
+      ? displayCurrency
+      : (currencies.values().next().value ?? "USD")
+    : selectedCurrency;
+
+  // "1 USD = 1.3501 SGD · IBKR live · 12:31" — the rates behind the totals.
+  const fxCaption = fx?.rates
+    .filter((r) => r.source !== "identity" && r.rate > 0)
+    .map(
+      (r) =>
+        `1 ${fx.target} = ${(1 / r.rate).toFixed(4)} ${r.currency} · ${
+          FX_SOURCE_LABEL[r.source] ?? r.source
+        }${r.as_of ? ` · ${new Date(r.as_of).toLocaleTimeString()}` : ""}`,
+    )
+    .join(" · ");
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -248,6 +302,26 @@ export function HeaderBar({ sessions }: { sessions: SessionMap }) {
               All
             </button>
           </div>
+          {mixedCurrency && currencyOptions.length > 1 && (
+            <div
+              className="flex flex-wrap gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800"
+              title="Currency the combined totals are converted into (live FX). Single-account views keep their own currency."
+            >
+              {currencyOptions.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCurrency(c)}
+                  className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${
+                    displayCurrency === c
+                      ? "bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-slate-50"
+                      : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
           {others.length > 0 && (
             <div className="ml-auto flex flex-wrap items-center gap-3">{
               others.map((g) => (
@@ -299,12 +373,7 @@ export function HeaderBar({ sessions }: { sessions: SessionMap }) {
                 {s.label}
               </p>
               <p className="mt-0.5 text-sm font-semibold text-slate-800 dark:text-slate-50">
-                {mixedCurrency
-                  ? "—"
-                  : money(
-                      stats[s.key],
-                      isAll ? (currencies.values().next().value ?? "USD") : selectedCurrency,
-                    )}
+                {money(stats[s.key], tileCurrency)}
               </p>
             </div>
           ))}
@@ -314,11 +383,19 @@ export function HeaderBar({ sessions }: { sessions: SessionMap }) {
       {/* Per-user breakdown behind the combined tiles. */}
       {isAll && accounts.length > 1 && (
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 border-t border-slate-100 pt-3 text-xs dark:border-slate-800">
-          {mixedCurrency && (
-            <span className="text-amber-600 dark:text-amber-400">
-              Accounts use different base currencies — totals not summed.
-            </span>
-          )}
+          {mixedCurrency &&
+            (fxReady ? (
+              fxCaption && (
+                <span className="text-slate-400 dark:text-slate-500">
+                  Totals in {displayCurrency} · {fxCaption}
+                </span>
+              )
+            ) : (
+              <span className="text-amber-600 dark:text-amber-400">
+                Accounts use different base currencies and no live FX rate is
+                available — totals not summed.
+              </span>
+            ))}
           {accounts.map((a) => (
             <span key={a.account_id} className="text-slate-400 dark:text-slate-500">
               {a.label}:{" "}

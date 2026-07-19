@@ -145,6 +145,12 @@ class IBKRClient:
     async def secdef_search(self, symbol: str) -> list:
         return await self._post("iserver/secdef/search", json={"symbol": symbol})
 
+    async def exchange_rate(self, source: str, target: str) -> dict:
+        """Spot FX rate for a currency pair, e.g. {"rate": 1.3486}."""
+        return await self._get(
+            "iserver/exchangerate", params={"source": source, "target": target}
+        )
+
     # ---- higher-level helpers ------------------------------------------
     async def all_positions(self, account_id: str, max_pages: int = 10) -> list:
         """Page through all positions. CP returns up to 100 rows per page."""

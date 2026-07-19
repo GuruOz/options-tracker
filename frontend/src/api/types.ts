@@ -260,6 +260,20 @@ export interface RollChain {
   account_label?: string;
 }
 
+// A live FX rate used somewhere in a response, for provenance captions.
+export interface FxRateInfo {
+  pair: string; // "USD/SGD"
+  rate: number;
+  as_of: string | null;
+  source: string; // "ibkr" | "public" | "cache" | "identity"
+}
+
+// GET /api/fx?target=... — one rate per account base currency into `target`.
+export interface FxResponse {
+  target: string;
+  rates: (FxRateInfo & { currency: string })[];
+}
+
 export interface Risk {
   scenario_move: number;
   index_symbol: string | null;
@@ -268,11 +282,17 @@ export interface Risk {
   gross_delta_dollars: number | null;
   scenario_pnl: number | null;
   scenario_pnl_pct: number | null;
-  // True when scenario_pnl_pct/assignment.coverage_ratio were suppressed
-  // because a position's currency differs from the account's base currency.
+  // True when a position's currency differs from the account's base currency
+  // (or, combined, when accounts disagree). Ratios are converted through a
+  // live FX rate when one is available and null only when it isn't.
   currency_mismatch: boolean;
   // The common currency of the dollar figures above, when unambiguous.
   exposure_currency: string | null;
+  base_currency?: string | null;
+  // Combined view only: the currency everything was converted into (null when
+  // no conversion happened or a rate was missing).
+  display_currency?: string | null;
+  fx_rates?: FxRateInfo[];
   assignment: Assignment;
   positions: RiskPosition[];
   equity_curve: EquityPoint[];
@@ -312,10 +332,17 @@ export interface Income {
   open_count: number;
   net_liquidation: number | null;
   yield_pct: number | null;
-  // True when yield_pct was suppressed because a trade's currency differs
-  // from the account's base currency (premium and net_liquidation would
-  // otherwise be silently divided across two different currencies).
+  // True when a trade's currency differs from the account's base currency
+  // (or, combined, when accounts disagree). yield_pct is converted through a
+  // live FX rate when one is available and null only when it isn't.
   currency_mismatch: boolean;
+  base_currency?: string | null;
+  // The single currency the account's premiums are denominated in, when known.
+  premium_currency?: string | null;
+  // Combined view only: the currency everything was converted into (null when
+  // no conversion happened or a rate was missing).
+  display_currency?: string | null;
+  fx_rates?: FxRateInfo[];
   // Present only in the combined view. The derived P&L sums across accounts,
   // but the manual overlay (cashed out / withdrawal / note) belongs to one
   // account, so it is carried per account instead of merged.

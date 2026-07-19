@@ -31,14 +31,19 @@ def compute_risk(
     account: AccountSnapshot | None,
     settings: dict | None = None,
     account_currency: str | None = None,
+    fx_rates: dict[tuple[str, str], float] | None = None,
 ) -> dict:
     """`account_currency` is the account's base currency (e.g. "SGD"). Position
     prices/strikes stay in the contract's own currency (e.g. "USD" for a
     US-listed option) - IBKR never converts them. When a position's recorded
     currency differs from the account's, ratios that would otherwise divide
-    one against the other (assignment coverage, scenario P&L %) are suppressed
-    rather than silently wrong. Positions with no recorded currency (older
-    rows, or a feed that didn't report one) are not treated as a mismatch."""
+    one against the other (assignment coverage, scenario P&L %) are converted
+    through `fx_rates` — a {(from_ccy, to_ccy): rate} map — when the exposure
+    currency is unambiguous and a rate is present, and suppressed otherwise.
+    A book whose positions span several currencies still suppresses (no single
+    rate applies). Positions with no recorded currency (older rows, or a feed
+    that didn't report one) are not treated as a mismatch. Dollar figures are
+    never converted here — they stay in the exposure currency."""
     cfg = (settings or DEFAULT_SETTINGS).get("risk") or DEFAULT_SETTINGS["risk"]
     scenario_move = float(cfg.get("scenario_move", -0.10))
     index_symbol = cfg.get("index_symbol", "QQQ")
@@ -113,8 +118,8 @@ def compute_risk(
 
     # `cash`/`net_liq` are in the account's base currency; position prices
     # (and so `total_obligation`, `scenario_pnl`) stay in the contract's own
-    # currency. Only suppress a ratio once we have positive evidence they
-    # differ - a position with no recorded currency isn't evidence either way.
+    # currency. Only treat them as mismatched on positive evidence - a position
+    # with no recorded currency isn't evidence either way.
     position_currencies = {p.currency for p in positions if p.currency}
     currency_mismatch = bool(
         account_currency and any(c != account_currency for c in position_currencies)
@@ -125,11 +130,23 @@ def compute_risk(
         next(iter(position_currencies)) if len(position_currencies) == 1 else None
     )
 
-    coverage_ratio = (
-        cash / total_obligation
-        if cash is not None and total_obligation > 0 and not currency_mismatch
-        else None
-    )
+    # Rate that converts exposure-currency figures into the account's base
+    # currency, so mismatched ratios can be computed instead of suppressed.
+    # None when not needed (no mismatch), the book spans currencies, or the
+    # caller had no rate — the latter two fall back to suppression.
+    conv = None
+    if currency_mismatch and exposure_currency and account_currency:
+        conv = (fx_rates or {}).get((exposure_currency, account_currency))
+
+    if cash is not None and total_obligation > 0:
+        if not currency_mismatch:
+            coverage_ratio = cash / total_obligation
+        elif conv is not None:
+            coverage_ratio = cash / (total_obligation * conv)
+        else:
+            coverage_ratio = None
+    else:
+        coverage_ratio = None
 
     contributions.sort(key=lambda c: abs(c["scenario_pnl"]), reverse=True)
 
@@ -141,7 +158,9 @@ def compute_risk(
         "gross_delta_dollars": gross,
         "scenario_pnl": scenario_pnl,
         "scenario_pnl_pct": (
-            (scenario_pnl / net_liq) if net_liq and not currency_mismatch else None
+            (scenario_pnl / net_liq) if net_liq and not currency_mismatch
+            else (scenario_pnl * conv / net_liq) if net_liq and conv is not None
+            else None
         ),
         "currency_mismatch": currency_mismatch,
         "exposure_currency": exposure_currency,
